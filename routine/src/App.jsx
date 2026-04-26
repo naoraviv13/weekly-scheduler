@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, X, Edit2, Copy, Trash2, Dumbbell, Home, Building2, Zap, Coffee, Sparkles, GripVertical, Check, Calendar, Flame, LayoutGrid, Library } from 'lucide-react';
+import { Plus, X, Edit2, Copy, Trash2, Dumbbell, Home, Building2, Zap, Coffee, Sparkles, GripVertical, Check, Calendar, Flame, LayoutGrid, Library, LogOut } from 'lucide-react';
+import { supabase } from './supabaseClient';
+import * as db from './supabaseData';
 
 const CATEGORY_STYLES = {
   workout: { icon: Dumbbell, label: 'Workout', color: '#FF4D2E', bg: 'rgba(255, 77, 46, 0.08)' },
@@ -87,12 +89,13 @@ function formatDateRange(dates) {
   return `${firstStr} — ${lastStr}`;
 }
 
-export default function ScheduleApp() {
+export default function ScheduleApp({ session }) {
+  const userId = session.user.id;
   const [loaded, setLoaded] = useState(false);
-  const [templates, setTemplates] = useState(DEFAULT_TEMPLATES);
-  const [weekAssignments, setWeekAssignments] = useState(DEFAULT_ASSIGNMENTS);
-  const [oneTimeTasks, setOneTimeTasks] = useState(DEFAULT_ONE_TIME);
-  const [completed, setCompleted] = useState(new Set(DEFAULT_COMPLETED));
+  const [templates, setTemplates] = useState([]);
+  const [weekAssignments, setWeekAssignments] = useState({});
+  const [oneTimeTasks, setOneTimeTasks] = useState({});
+  const [completed, setCompleted] = useState(new Set());
   const [view, setView] = useState('week');
   const [editingTemplate, setEditingTemplate] = useState(null);
   const [showDayDetail, setShowDayDetail] = useState(null);
@@ -100,52 +103,61 @@ export default function ScheduleApp() {
 
   const { dates: weekDates, todayIdx } = getWeekDates();
 
-  // Load from storage on mount
+  // Load all data from Supabase on mount
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const data = JSON.parse(raw);
-        if (data.templates) setTemplates(data.templates);
-        if (data.weekAssignments) setWeekAssignments(data.weekAssignments);
-        if (data.oneTimeTasks) setOneTimeTasks(data.oneTimeTasks);
-        if (data.completed) setCompleted(new Set(data.completed));
+    async function loadAll() {
+      try {
+        const [t, wa, ot, c] = await Promise.all([
+          db.fetchTemplates(),
+          db.fetchWeekAssignments(),
+          db.fetchOneTimeTasks(),
+          db.fetchCompletions(),
+        ]);
+        setTemplates(t);
+        setWeekAssignments(wa);
+        setOneTimeTasks(ot);
+        setCompleted(c);
+      } catch (e) {
+        console.error('Failed to load data:', e);
       }
-    } catch (e) { /* use defaults */ }
-    setLoaded(true);
+      setLoaded(true);
+    }
+    loadAll();
   }, []);
-
-  // Save on every change (after initial load)
-  useEffect(() => {
-    if (!loaded) return;
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        templates,
-        weekAssignments,
-        oneTimeTasks,
-        completed: Array.from(completed),
-      }));
-    } catch (e) { console.error('Save failed:', e); }
-  }, [templates, weekAssignments, oneTimeTasks, completed, loaded]);
 
   const getTemplate = (id) => templates.find(t => t.id === id);
 
-  const toggleComplete = (key) => {
+  const toggleComplete = async (key) => {
     const next = new Set(completed);
-    if (next.has(key)) next.delete(key); else next.add(key);
+    const isComplete = next.has(key);
+    if (isComplete) next.delete(key); else next.add(key);
     setCompleted(next);
+
+    // Parse key to get dayIdx, taskId, isOneTime
+    const parts = key.split(':');
+    let dayIdx, taskId, isOneTime;
+    if (parts[1] === 'oo') {
+      dayIdx = parseInt(parts[0]); taskId = parts[2]; isOneTime = true;
+    } else {
+      dayIdx = parseInt(parts[0]); taskId = parts[1]; isOneTime = false;
+    }
+    try {
+      await db.toggleCompletion(dayIdx, taskId, isOneTime, isComplete, userId);
+    } catch (e) { console.error('Toggle completion failed:', e); }
   };
 
-  const addOneTimeTask = (dayIdx, task) => {
-    const existing = oneTimeTasks[dayIdx] || [];
-    const newTask = { ...task, id: `oo${Date.now()}` };
-    setOneTimeTasks({
-      ...oneTimeTasks,
-      [dayIdx]: [...existing, newTask].sort((a, b) => a.time.localeCompare(b.time)),
-    });
+  const addOneTimeTask = async (dayIdx, task) => {
+    try {
+      const saved = await db.addOneTimeTask(dayIdx, task, userId);
+      const existing = oneTimeTasks[dayIdx] || [];
+      setOneTimeTasks({
+        ...oneTimeTasks,
+        [dayIdx]: [...existing, saved].sort((a, b) => a.time.localeCompare(b.time)),
+      });
+    } catch (e) { console.error('Add one-time task failed:', e); }
   };
 
-  const removeOneTimeTask = (dayIdx, taskId) => {
+  const removeOneTimeTask = async (dayIdx, taskId) => {
     const existing = oneTimeTasks[dayIdx] || [];
     setOneTimeTasks({ ...oneTimeTasks, [dayIdx]: existing.filter(t => t.id !== taskId) });
     const key = completionKey(dayIdx, taskId, true);
@@ -154,14 +166,38 @@ export default function ScheduleApp() {
       next.delete(key);
       setCompleted(next);
     }
+    try {
+      await db.removeOneTimeTask(taskId);
+    } catch (e) { console.error('Remove one-time task failed:', e); }
+  };
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
   };
 
   const resetData = async () => {
-    if (!confirm('Reset to default data? This will erase all your templates and tasks.')) return;
-    setTemplates(DEFAULT_TEMPLATES);
-    setWeekAssignments(DEFAULT_ASSIGNMENTS);
-    setOneTimeTasks(DEFAULT_ONE_TIME);
-    setCompleted(new Set(DEFAULT_COMPLETED));
+    if (!confirm('Reset all data? This will delete all your templates and tasks from the server.')) return;
+    // Delete all user data from Supabase
+    try {
+      for (const t of templates) {
+        await db.deleteTemplate(t.id);
+      }
+      setTemplates([]);
+      setWeekAssignments({ 0: null, 1: null, 2: null, 3: null, 4: null, 5: null, 6: null });
+      setOneTimeTasks({});
+      setCompleted(new Set());
+    } catch (e) { console.error('Reset failed:', e); }
+  };
+
+  const handleSetWeekAssignments = async (newAssignments) => {
+    for (let i = 0; i < 7; i++) {
+      if (newAssignments[i] !== weekAssignments[i]) {
+        try {
+          await db.setWeekAssignment(i, newAssignments[i], userId);
+        } catch (e) { console.error('Set week assignment failed:', e); }
+      }
+    }
+    setWeekAssignments(newAssignments);
   };
 
   return (
@@ -269,15 +305,20 @@ export default function ScheduleApp() {
           </div>
         </div>
 
-        <nav className="desktop-nav" style={{ gap: 4, background: 'rgba(0,0,0,0.04)', padding: 4, borderRadius: 999 }}>
-          <button className={`pill-tab ${view === 'week' ? 'active' : ''}`} onClick={() => setView('week')}>This Week</button>
-          <button className={`pill-tab ${view === 'templates' ? 'active' : ''}`} onClick={() => setView('templates')}>Templates</button>
-        </nav>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <nav className="desktop-nav" style={{ gap: 4, background: 'rgba(0,0,0,0.04)', padding: 4, borderRadius: 999 }}>
+            <button className={`pill-tab ${view === 'week' ? 'active' : ''}`} onClick={() => setView('week')}>This Week</button>
+            <button className={`pill-tab ${view === 'templates' ? 'active' : ''}`} onClick={() => setView('templates')}>Templates</button>
+          </nav>
+          <button onClick={handleSignOut} className="btn-ghost" style={{ padding: 8, color: '#737373' }} title="Sign out">
+            <LogOut size={16} />
+          </button>
+        </div>
       </header>
 
       {view === 'week' ? (
         <WeekView
-          templates={templates} weekAssignments={weekAssignments} setWeekAssignments={setWeekAssignments}
+          templates={templates} weekAssignments={weekAssignments} setWeekAssignments={handleSetWeekAssignments}
           oneTimeTasks={oneTimeTasks} completed={completed} toggleComplete={toggleComplete}
           getTemplate={getTemplate} showDayDetail={showDayDetail} setShowDayDetail={setShowDayDetail}
           addOneTimeTask={addOneTimeTask} removeOneTimeTask={removeOneTimeTask}
@@ -288,7 +329,7 @@ export default function ScheduleApp() {
           templates={templates} setTemplates={setTemplates}
           editingTemplate={editingTemplate} setEditingTemplate={setEditingTemplate}
           creatingTemplate={creatingTemplate} setCreatingTemplate={setCreatingTemplate}
-          resetData={resetData}
+          resetData={resetData} userId={userId}
         />
       )}
 
@@ -782,14 +823,16 @@ function OneTimeComposer({ onSave, onCancel }) {
   );
 }
 
-function TemplatesView({ templates, setTemplates, editingTemplate, setEditingTemplate, creatingTemplate, setCreatingTemplate, resetData }) {
-  const handleDelete = (id) => setTemplates(templates.filter(t => t.id !== id));
-  const handleDuplicate = (t) => {
-    const newT = {
-      ...t, id: `t${Date.now()}`, name: `${t.name} (copy)`,
-      tasks: t.tasks.map(task => ({ ...task, id: `task${Date.now()}-${Math.random()}` })),
-    };
-    setTemplates([...templates, newT]);
+function TemplatesView({ templates, setTemplates, editingTemplate, setEditingTemplate, creatingTemplate, setCreatingTemplate, resetData, userId }) {
+  const handleDelete = async (id) => {
+    setTemplates(templates.filter(t => t.id !== id));
+    try { await db.deleteTemplate(id); } catch (e) { console.error('Delete failed:', e); }
+  };
+  const handleDuplicate = async (t) => {
+    try {
+      const saved = await db.upsertTemplate({ name: `${t.name} (copy)`, accent: t.accent, tasks: t.tasks }, userId);
+      setTemplates([...templates, saved]);
+    } catch (e) { console.error('Duplicate failed:', e); }
   };
 
   return (
@@ -857,12 +900,15 @@ function TemplatesView({ templates, setTemplates, editingTemplate, setEditingTem
       {(editingTemplate || creatingTemplate) && (
         <TemplateEditor
           template={editingTemplate}
-          onSave={(updated) => {
-            if (editingTemplate) {
-              setTemplates(templates.map(t => t.id === updated.id ? updated : t));
-            } else {
-              setTemplates([...templates, { ...updated, id: `t${Date.now()}` }]);
-            }
+          onSave={async (updated) => {
+            try {
+              const saved = await db.upsertTemplate(updated, userId);
+              if (editingTemplate) {
+                setTemplates(templates.map(t => t.id === saved.id ? saved : t));
+              } else {
+                setTemplates([...templates, saved]);
+              }
+            } catch (e) { console.error('Save template failed:', e); }
             setEditingTemplate(null);
             setCreatingTemplate(false);
           }}
