@@ -288,6 +288,7 @@ export default function ScheduleApp({ session }) {
           templates={templates} weekAssignments={weekAssignments}
           oneTimeTasks={oneTimeTasks} completed={completed}
           getTemplate={getTemplate} goals={goals}
+          onSaveGoals={handleSaveGoals}
           customGoals={customGoals}
           onAddCustomGoal={handleAddCustomGoal}
           onUpdateCustomGoal={handleUpdateCustomGoal}
@@ -511,7 +512,16 @@ function WeekView({
                       const k = completionKey(dKey, task.id, task.isOneTime);
                       const isComplete = completed.has(k);
                       return (
-                        <div key={k} className={`task-row ${isComplete ? 'task-completed' : ''}`}>
+                        <div
+                          key={k}
+                          className={`task-row mini-task ${isComplete ? 'task-completed' : ''}`}
+                          onClick={(e) => { e.stopPropagation(); toggleComplete(dKey, task.id, task.isOneTime); }}
+                          role="button"
+                          aria-label={`${isComplete ? 'Uncheck' : 'Check'} ${task.title}`}
+                        >
+                          <span className={`mini-check ${isComplete ? 'mini-check-on' : ''}`}>
+                            {isComplete && <Check size={10} color="white" strokeWidth={3} />}
+                          </span>
                           <div className="task-icon" style={{ background: cat.bg, width: 22, height: 22 }}>
                             <Icon size={11} color={cat.color} />
                           </div>
@@ -526,7 +536,6 @@ function WeekView({
                             </div>
                             <div className="mono" style={{ fontSize: 9, color: '#737373' }}>{formatTime(task.time, task.endTime)}</div>
                           </div>
-                          {isComplete && <Check size={12} color="#0A0A0A" />}
                         </div>
                       );
                     })}
@@ -843,7 +852,7 @@ function OneTimeComposer({ onSave, onCancel }) {
 // ---------------------------------------------------------------------------
 
 function StatsView({
-  templates, weekAssignments, oneTimeTasks, completed, getTemplate, goals,
+  templates, weekAssignments, oneTimeTasks, completed, getTemplate, goals, onSaveGoals,
   customGoals, onAddCustomGoal, onUpdateCustomGoal, onDeleteCustomGoal,
   weightEntries, onSaveWeight, onDeleteWeight, todayKey, onEditGoals,
 }) {
@@ -927,7 +936,9 @@ function StatsView({
     { key: 'boxing',   cat: 'boxing',  label: 'Boxing',     weeklyGoal: goals.boxing   },
     { key: 'office',   cat: 'office',  label: 'Office days',weeklyGoal: goals.office   },
     { key: 'wfh',      cat: 'wfh',     label: 'WFH days',   weeklyGoal: goals.wfh      },
-  ].map(g => goalCardFromTotals(g, completedByCat, totals, weeks));
+  ]
+    .filter(g => g.weeklyGoal > 0)
+    .map(g => goalCardFromTotals(g, completedByCat, totals, weeks));
 
   const customGoalCards = customGoals.map(g =>
     goalCardFromTotals(
@@ -1025,7 +1036,14 @@ function StatsView({
       </div>
 
       <div className="goals-grid" style={{ display: 'grid', gap: 12 }}>
-        {builtInGoalCards.map(g => <GoalCard key={g.key} g={g} />)}
+        {builtInGoalCards.map(g => (
+          <GoalCard key={g.key} g={g}
+            onDelete={() => {
+              if (confirm(`Remove the "${g.label}" goal? You can bring it back from Defaults.`)) {
+                onSaveGoals({ ...goals, [g.key]: 0 });
+              }
+            }} />
+        ))}
         {customGoalCards.map(g => (
           <GoalCard key={g.key} g={g}
             onUpdate={(patch) => onUpdateCustomGoal(g.id, patch)}
@@ -1089,10 +1107,10 @@ function GoalCard({ g, onUpdate, onDelete }) {
             <span className="mono" style={{ fontSize: 9, padding: '3px 7px', background: 'rgba(220,38,38,0.10)', color: '#DC2626', borderRadius: 4, letterSpacing: '0.1em', fontWeight: 600 }}>BEHIND</span>
           )}
           {g.custom && (
-            <>
-              <button className="btn-ghost" style={{ padding: 6 }} onClick={() => { setDraftTarget(g.weeklyGoal); setEditing(true); }}><Edit2 size={13} /></button>
-              <button className="btn-ghost" style={{ padding: 6, color: '#DC2626' }} onClick={onDelete}><Trash2 size={13} /></button>
-            </>
+            <button className="btn-ghost" style={{ padding: 6 }} onClick={() => { setDraftTarget(g.weeklyGoal); setEditing(true); }}><Edit2 size={13} /></button>
+          )}
+          {onDelete && (
+            <button className="btn-ghost" style={{ padding: 6, color: '#DC2626' }} onClick={onDelete} aria-label="Delete goal"><Trash2 size={13} /></button>
           )}
         </div>
       </div>
@@ -1786,6 +1804,12 @@ function GlobalStyles() {
       .task-completed { opacity: 0.45; }
       .task-completed .task-title { text-decoration: line-through; text-decoration-thickness: 1.5px; }
       .one-time-badge { font-size: 8px; font-weight: 700; letter-spacing: 0.05em; padding: 2px 6px; border-radius: 3px; background: rgba(0,0,0,0.06); color: #525252; font-family: 'JetBrains Mono', monospace; }
+
+      .mini-task { cursor: pointer; padding: 6px 8px; }
+      .mini-task:hover { background: rgba(255, 77, 46, 0.06); }
+      .mini-check { width: 16px; height: 16px; min-width: 16px; border-radius: 5px; border: 1.5px solid rgba(0,0,0,0.2); background: white; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all 0.15s ease; }
+      .mini-task:hover .mini-check { border-color: #FF4D2E; }
+      .mini-check-on { background: #FF4D2E; border-color: #FF4D2E; }
 
       .sheet-backdrop { position: fixed; inset: 0; background: rgba(10,10,10,0.4); backdrop-filter: blur(8px); display: grid; place-items: center; padding: 0; z-index: 100; animation: fadeIn 0.2s ease; }
       .sheet { background: #FAFAF7; border-radius: 24px; max-width: 560px; width: 100%; max-height: 88vh; overflow-y: auto; padding: 28px; animation: slideUp 0.25s cubic-bezier(0.32, 0.72, 0, 1); box-shadow: 0 30px 60px -20px rgba(0,0,0,0.3); position: relative; }
