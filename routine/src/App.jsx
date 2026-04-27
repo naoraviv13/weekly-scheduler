@@ -1,290 +1,243 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, X, Edit2, Copy, Trash2, Dumbbell, Home, Building2, Zap, Coffee, Sparkles, GripVertical, Check, Calendar, Flame, LayoutGrid, Library, LogOut } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Plus, X, Edit2, Copy, Trash2, Dumbbell, Home, Building2, Zap, Coffee, Sparkles,
+  GripVertical, Check, Calendar, Flame, LayoutGrid, Library, LogOut, BarChart3,
+  Minus, Settings, TrendingUp, Scale, Target,
+} from 'lucide-react';
 import { supabase } from './supabaseClient';
 import * as db from './supabaseData';
+import { dateKey, getWeekStart, addDays } from './supabaseData';
 
 const CATEGORY_STYLES = {
   workout: { icon: Dumbbell, label: 'Workout', color: '#FF4D2E', bg: 'rgba(255, 77, 46, 0.08)' },
-  boxing: { icon: Zap, label: 'Boxing', color: '#E11D48', bg: 'rgba(225, 29, 72, 0.08)' },
-  office: { icon: Building2, label: 'Office', color: '#0F172A', bg: 'rgba(15, 23, 42, 0.06)' },
-  wfh: { icon: Home, label: 'WFH', color: '#0891B2', bg: 'rgba(8, 145, 178, 0.08)' },
-  break: { icon: Coffee, label: 'Personal', color: '#A16207', bg: 'rgba(161, 98, 7, 0.08)' },
-  custom: { icon: Sparkles, label: 'Custom', color: '#7C3AED', bg: 'rgba(124, 58, 237, 0.08)' },
+  boxing:  { icon: Zap,      label: 'Boxing',   color: '#E11D48', bg: 'rgba(225, 29, 72, 0.08)' },
+  office:  { icon: Building2,label: 'Office',   color: '#0F172A', bg: 'rgba(15, 23, 42, 0.06)' },
+  wfh:     { icon: Home,     label: 'WFH',      color: '#0891B2', bg: 'rgba(8, 145, 178, 0.08)' },
+  break:   { icon: Coffee,   label: 'Personal', color: '#A16207', bg: 'rgba(161, 98, 7, 0.08)' },
+  custom:  { icon: Sparkles, label: 'Custom',   color: '#7C3AED', bg: 'rgba(124, 58, 237, 0.08)' },
 };
 
-// Sunday-first week
 const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const DAY_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-const DEFAULT_TEMPLATES = [
-  {
-    id: 't1', name: 'Office + Boxing', accent: '#E11D48',
-    tasks: [
-      { id: 'task1', title: 'Commute to office', time: '08:00', category: 'office' },
-      { id: 'task2', title: 'Deep work block', time: '09:30', category: 'office' },
-      { id: 'task3', title: 'Boxing session', time: '19:00', category: 'boxing' },
-    ],
-  },
-  {
-    id: 't2', name: 'WFH Power Day', accent: '#0891B2',
-    tasks: [
-      { id: 'task4', title: 'Morning workout', time: '07:00', category: 'workout' },
-      { id: 'task5', title: 'Focus work', time: '09:00', category: 'wfh' },
-      { id: 'task6', title: 'Team standup', time: '11:00', category: 'wfh' },
-    ],
-  },
-  {
-    id: 't3', name: 'Recovery Sunday', accent: '#A16207',
-    tasks: [
-      { id: 'task7', title: 'Slow morning', time: '09:00', category: 'break' },
-      { id: 'task8', title: 'Mobility work', time: '11:00', category: 'workout' },
-      { id: 'task9', title: 'Plan the week', time: '17:00', category: 'break' },
-    ],
-  },
-  {
-    id: 't4', name: 'Office Standard', accent: '#0F172A',
-    tasks: [
-      { id: 'task10', title: 'Commute', time: '08:00', category: 'office' },
-      { id: 'task11', title: 'Meetings', time: '10:00', category: 'office' },
-      { id: 'task12', title: 'Evening run', time: '18:30', category: 'workout' },
-    ],
-  },
-];
+const completionKey = (dKey, taskId, isOneTime = false) =>
+  isOneTime ? `${dKey}:oo:${taskId}` : `${dKey}:${taskId}`;
 
-// Sunday=0, Monday=1, ... in this Sunday-first ordering
-const DEFAULT_ASSIGNMENTS = { 0: 't3', 1: 't1', 2: 't2', 3: 't1', 4: 't2', 5: 't1', 6: null };
-const DEFAULT_ONE_TIME = {
-  2: [{ id: 'oo1', title: 'Dentist appointment', time: '14:30', category: 'break' }],
-  4: [{ id: 'oo2', title: 'Dinner with Maya', time: '20:00', category: 'break' }],
-};
-const DEFAULT_COMPLETED = ['1:task1', '1:task2'];
+const formatTime = (time, endTime) => endTime ? `${time}–${endTime}` : time;
 
-const STORAGE_KEY = 'routine:state:v1';
-
-const completionKey = (dayIdx, taskId, isOneTime = false) =>
-  isOneTime ? `${dayIdx}:oo:${taskId}` : `${dayIdx}:${taskId}`;
-
-// Compute the current week's Sunday-anchored dates
 function getWeekDates() {
-  const today = new Date();
-  const dayOfWeek = today.getDay(); // 0 = Sunday
-  const sunday = new Date(today);
-  sunday.setDate(today.getDate() - dayOfWeek);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const todayIdx = today.getDay();
+  const sunday = getWeekStart(today);
   const dates = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(sunday);
-    d.setDate(sunday.getDate() + i);
-    dates.push(d);
-  }
-  return { dates, todayIdx: dayOfWeek };
+  for (let i = 0; i < 7; i++) dates.push(addDays(sunday, i));
+  return { dates, todayIdx, today };
 }
 
 function formatDateRange(dates) {
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const first = dates[0], last = dates[6];
-  const firstStr = `${months[first.getMonth()]} ${first.getDate()}`;
-  const lastStr = first.getMonth() === last.getMonth()
-    ? `${last.getDate()}`
-    : `${months[last.getMonth()]} ${last.getDate()}`;
-  return `${firstStr} — ${lastStr}`;
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const f = dates[0], l = dates[6];
+  const fs = `${months[f.getMonth()]} ${f.getDate()}`;
+  const ls = f.getMonth() === l.getMonth() ? `${l.getDate()}` : `${months[l.getMonth()]} ${l.getDate()}`;
+  return `${fs} — ${ls}`;
+}
+
+function heroPhrase(pct, anyTasks) {
+  if (!anyTasks) return { lead: 'Plan today', tail: '.' };
+  if (pct >= 100) return { lead: 'Crushed it', tail: '.' };
+  if (pct >= 50)  return { lead: 'Halfway there', tail: '.' };
+  if (pct > 0)   return { lead: "Let's go", tail: '.' };
+  return { lead: 'Plan today', tail: '.' };
 }
 
 export default function ScheduleApp({ session }) {
   const userId = session.user.id;
   const [loaded, setLoaded] = useState(false);
+  const [seeding, setSeeding] = useState(false);
   const [templates, setTemplates] = useState([]);
   const [weekAssignments, setWeekAssignments] = useState({});
-  const [oneTimeTasks, setOneTimeTasks] = useState({});
-  const [completed, setCompleted] = useState(new Set());
+  const [oneTimeTasks, setOneTimeTasks] = useState({});  // { [dateKey]: Task[] }
+  const [completed, setCompleted] = useState(new Set()); // Set<completionKey>
+  const [goals, setGoalsState] = useState({ workouts: 4, boxing: 2, office: 3, wfh: 2 });
+  const [customGoals, setCustomGoals] = useState([]);
+  const [weightEntries, setWeightEntries] = useState([]); // [{date, weight}]
   const [view, setView] = useState('week');
   const [editingTemplate, setEditingTemplate] = useState(null);
-  const [showDayDetail, setShowDayDetail] = useState(null);
+  const [showDayDetail, setShowDayDetail] = useState(null); // dateKey | null
   const [creatingTemplate, setCreatingTemplate] = useState(false);
+  const [editingGoals, setEditingGoals] = useState(false);
 
-  const { dates: weekDates, todayIdx } = getWeekDates();
+  const { dates: weekDates, todayIdx, today } = getWeekDates();
+  const todayKey = dateKey(today);
 
-  // Load all data from Supabase on mount
   useEffect(() => {
     async function loadAll() {
       try {
-        const [t, wa, ot, c] = await Promise.all([
+        const isFirst = await db.isFirstTimeUser(userId);
+        if (isFirst) {
+          setSeeding(true);
+          await db.seedMockHistory(userId);
+          setSeeding(false);
+        }
+        const [t, wa, ot, c, g, cg, we] = await Promise.all([
           db.fetchTemplates(),
           db.fetchWeekAssignments(),
           db.fetchOneTimeTasks(),
           db.fetchCompletions(),
+          db.fetchGoals(userId),
+          db.fetchCustomGoals(userId),
+          db.fetchWeightEntries(userId, 365),
         ]);
-        setTemplates(t);
-        setWeekAssignments(wa);
-        setOneTimeTasks(ot);
-        setCompleted(c);
-      } catch (e) {
-        console.error('Failed to load data:', e);
-      }
+        setTemplates(t); setWeekAssignments(wa); setOneTimeTasks(ot);
+        setCompleted(c); setGoalsState(g);
+        setCustomGoals(cg); setWeightEntries(we);
+      } catch (e) { console.error('Load failed:', e); }
       setLoaded(true);
     }
     loadAll();
-  }, []);
+  }, [userId]);
 
   const getTemplate = (id) => templates.find(t => t.id === id);
 
-  const toggleComplete = async (key) => {
+  const toggleComplete = async (dKey, taskId, isOneTime) => {
+    const key = completionKey(dKey, taskId, isOneTime);
     const next = new Set(completed);
     const isComplete = next.has(key);
     if (isComplete) next.delete(key); else next.add(key);
     setCompleted(next);
-
-    // Parse key to get dayIdx, taskId, isOneTime
-    const parts = key.split(':');
-    let dayIdx, taskId, isOneTime;
-    if (parts[1] === 'oo') {
-      dayIdx = parseInt(parts[0]); taskId = parts[2]; isOneTime = true;
-    } else {
-      dayIdx = parseInt(parts[0]); taskId = parts[1]; isOneTime = false;
-    }
     try {
-      await db.toggleCompletion(dayIdx, taskId, isOneTime, isComplete, userId);
-    } catch (e) { console.error('Toggle completion failed:', e); }
+      await db.toggleCompletion(dKey, taskId, isOneTime, isComplete, userId);
+    } catch (e) { console.error('Toggle failed:', e); }
   };
 
-  const addOneTimeTask = async (dayIdx, task) => {
+  const addOneTimeTask = async (dKey, task) => {
     try {
-      const saved = await db.addOneTimeTask(dayIdx, task, userId);
-      const existing = oneTimeTasks[dayIdx] || [];
+      const saved = await db.addOneTimeTask(dKey, task, userId);
+      const existing = oneTimeTasks[dKey] || [];
       setOneTimeTasks({
         ...oneTimeTasks,
-        [dayIdx]: [...existing, saved].sort((a, b) => a.time.localeCompare(b.time)),
+        [dKey]: [...existing, saved].sort((a, b) => a.time.localeCompare(b.time)),
       });
-    } catch (e) { console.error('Add one-time task failed:', e); }
+    } catch (e) { console.error('Add one-time failed:', e); }
   };
 
-  const removeOneTimeTask = async (dayIdx, taskId) => {
-    const existing = oneTimeTasks[dayIdx] || [];
-    setOneTimeTasks({ ...oneTimeTasks, [dayIdx]: existing.filter(t => t.id !== taskId) });
-    const key = completionKey(dayIdx, taskId, true);
-    if (completed.has(key)) {
-      const next = new Set(completed);
-      next.delete(key);
-      setCompleted(next);
+  const removeOneTimeTask = async (dKey, taskId) => {
+    const existing = oneTimeTasks[dKey] || [];
+    setOneTimeTasks({ ...oneTimeTasks, [dKey]: existing.filter(t => t.id !== taskId) });
+    const ck = completionKey(dKey, taskId, true);
+    if (completed.has(ck)) {
+      const next = new Set(completed); next.delete(ck); setCompleted(next);
     }
-    try {
-      await db.removeOneTimeTask(taskId);
-    } catch (e) { console.error('Remove one-time task failed:', e); }
-  };
-
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-  };
-
-  const resetData = async () => {
-    if (!confirm('Reset all data? This will delete all your templates and tasks from the server.')) return;
-    // Delete all user data from Supabase
-    try {
-      for (const t of templates) {
-        await db.deleteTemplate(t.id);
-      }
-      setTemplates([]);
-      setWeekAssignments({ 0: null, 1: null, 2: null, 3: null, 4: null, 5: null, 6: null });
-      setOneTimeTasks({});
-      setCompleted(new Set());
-    } catch (e) { console.error('Reset failed:', e); }
+    try { await db.removeOneTimeTask(taskId); } catch (e) { console.error('Remove failed:', e); }
   };
 
   const handleSetWeekAssignments = async (newAssignments) => {
     for (let i = 0; i < 7; i++) {
       if (newAssignments[i] !== weekAssignments[i]) {
-        try {
-          await db.setWeekAssignment(i, newAssignments[i], userId);
-        } catch (e) { console.error('Set week assignment failed:', e); }
+        try { await db.setWeekAssignment(i, newAssignments[i], userId); }
+        catch (e) { console.error('Assign failed:', e); }
       }
     }
     setWeekAssignments(newAssignments);
   };
 
-  return (
-    <div style={{ minHeight: '100vh', background: '#FAFAF7', fontFamily: "'Inter Tight', system-ui, sans-serif", color: '#0A0A0A', paddingBottom: 80 }}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,800&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-        * { box-sizing: border-box; }
-        .display-font { font-family: 'Fraunces', serif; font-style: italic; letter-spacing: -0.02em; }
-        .mono { font-family: 'JetBrains Mono', monospace; }
-        button { cursor: pointer; border: none; background: none; font-family: inherit; color: inherit; }
-        .btn-primary { background: #0A0A0A; color: #FAFAF7; padding: 10px 18px; border-radius: 999px; font-weight: 500; font-size: 14px; transition: transform 0.15s ease, background 0.15s ease; display: inline-flex; align-items: center; gap: 6px; }
-        .btn-primary:hover { background: #FF4D2E; transform: translateY(-1px); }
-        .btn-ghost { padding: 8px 14px; border-radius: 999px; font-weight: 500; font-size: 13px; color: #525252; transition: background 0.15s ease; }
-        .btn-ghost:hover { background: rgba(0,0,0,0.06); }
-        .day-card { background: white; border-radius: 20px; padding: 18px; border: 1px solid rgba(0,0,0,0.06); transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease; cursor: pointer; position: relative; overflow: hidden; }
-        .day-card:hover { transform: translateY(-2px); box-shadow: 0 12px 30px -10px rgba(0,0,0,0.12); border-color: rgba(0,0,0,0.12); }
-        .day-card.empty { background: #F4F3EE; border-style: dashed; border-color: rgba(0,0,0,0.12); }
-        .day-card.today::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: #FF4D2E; }
-        .template-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; background: white; border: 1.5px solid; }
-        .task-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; transition: background 0.12s ease; }
-        .task-row:hover { background: rgba(0,0,0,0.03); }
-        .task-icon { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; flex-shrink: 0; }
-        .checkbox { width: 20px; height: 20px; border-radius: 6px; border: 1.5px solid rgba(0,0,0,0.2); background: white; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all 0.15s ease; cursor: pointer; }
-        .checkbox:hover { border-color: #0A0A0A; }
-        .checkbox.checked-accent { background: #FF4D2E; border-color: #FF4D2E; }
-        .task-completed { opacity: 0.45; }
-        .task-completed .task-title { text-decoration: line-through; text-decoration-thickness: 1.5px; }
-        .one-time-badge { font-size: 8px; font-weight: 700; letter-spacing: 0.05em; padding: 2px 6px; border-radius: 3px; background: rgba(0,0,0,0.06); color: #525252; font-family: 'JetBrains Mono', monospace; }
-        .modal-backdrop { position: fixed; inset: 0; background: rgba(10,10,10,0.4); backdrop-filter: blur(8px); display: grid; place-items: center; padding: 20px; z-index: 100; animation: fadeIn 0.2s ease; }
-        .modal { background: #FAFAF7; border-radius: 24px; max-width: 560px; width: 100%; max-height: 88vh; overflow-y: auto; padding: 28px; animation: slideUp 0.25s ease; box-shadow: 0 30px 60px -20px rgba(0,0,0,0.3); }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes checkPop { 0% { transform: scale(1); } 50% { transform: scale(1.2); } 100% { transform: scale(1); } }
-        .check-pop { animation: checkPop 0.3s ease; }
-        .input { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1.5px solid rgba(0,0,0,0.1); background: white; font-family: inherit; font-size: 14px; transition: border-color 0.15s ease; }
-        .input:focus { outline: none; border-color: #0A0A0A; }
-        .week-grid { display: grid; gap: 14px; grid-template-columns: repeat(7, 1fr); }
-        @media (max-width: 1100px) { .week-grid { grid-template-columns: repeat(3, 1fr); } }
-        @media (max-width: 700px) { .week-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; } }
-        @media (max-width: 480px) { .week-grid { grid-template-columns: 1fr; } }
-        .templates-grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
-        .pill-tab { padding: 8px 16px; border-radius: 999px; font-size: 13px; font-weight: 600; transition: all 0.2s ease; }
-        .pill-tab.active { background: #0A0A0A; color: #FAFAF7; }
-        .pill-tab:not(.active):hover { background: rgba(0,0,0,0.06); }
-        .stat-num { font-family: 'Fraunces', serif; font-weight: 600; font-size: 32px; line-height: 1; }
-        .progress-bar { height: 4px; background: rgba(0,0,0,0.08); border-radius: 999px; overflow: hidden; }
-        .progress-fill { height: 100%; background: #FF4D2E; border-radius: 999px; transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
-        .section-divider { display: flex; align-items: center; gap: 10px; margin: 12px 0 6px; }
-        .section-divider::before, .section-divider::after { content: ''; flex: 1; height: 1px; background: rgba(0,0,0,0.06); }
-        .section-divider-label { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: #737373; letter-spacing: 0.15em; font-weight: 600; }
+  const handleSaveGoals = async (newGoals) => {
+    setGoalsState(newGoals);
+    try { await db.saveGoals(newGoals, userId); }
+    catch (e) { console.error('Save goals failed:', e); }
+  };
 
-        /* Desktop nav */
-        .desktop-nav { display: flex; }
-        /* Mobile bottom tab bar */
-        .mobile-nav {
-          display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 50;
-          background: rgba(250,250,247,0.92); backdrop-filter: blur(16px);
-          border-top: 1px solid rgba(0,0,0,0.06); padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
-          justify-content: space-around; align-items: center; gap: 4px;
-        }
-        .mobile-nav-tab {
-          flex: 1; max-width: 120px; padding: 8px; border-radius: 14px;
-          display: flex; flex-direction: column; align-items: center; gap: 4px;
-          color: #737373; transition: all 0.2s ease;
-        }
-        .mobile-nav-tab.active { color: #0A0A0A; background: rgba(0,0,0,0.04); }
-        .mobile-nav-tab.fab {
-          background: #0A0A0A; color: #FAFAF7; border-radius: 50%;
-          width: 56px; height: 56px; padding: 0; flex: 0 0 auto;
-          margin-top: -20px; box-shadow: 0 8px 20px -4px rgba(0,0,0,0.25);
-          transition: transform 0.15s ease, background 0.15s ease;
-          flex-direction: row; align-items: center; justify-content: center;
-        }
-        .mobile-nav-tab.fab:hover { background: #FF4D2E; transform: scale(1.05); }
-        .mobile-nav-label { font-size: 10px; font-weight: 600; letter-spacing: 0.02em; }
-        @media (max-width: 700px) {
-          .desktop-nav { display: none; }
-          .mobile-nav { display: flex; }
-          .header-padding { padding: 16px 20px !important; }
-          .main-padding { padding: 20px !important; }
-          .hero-title { font-size: clamp(32px, 9vw, 44px) !important; }
-          .stats-strip { grid-template-columns: repeat(2, 1fr) !important; }
-        }
-      `}</style>
+  const handleSignOut = async () => { await supabase.auth.signOut(); };
+
+  // ---- Custom goals handlers ----
+  const handleAddCustomGoal = async (goal) => {
+    try {
+      const saved = await db.addCustomGoal(userId, { ...goal, sortOrder: customGoals.length });
+      setCustomGoals([...customGoals, saved]);
+    } catch (e) { console.error('Add custom goal failed:', e); }
+  };
+  const handleUpdateCustomGoal = async (id, patch) => {
+    setCustomGoals(customGoals.map(g => g.id === id ? { ...g, ...patch } : g));
+    try { await db.updateCustomGoal(id, patch); }
+    catch (e) { console.error('Update custom goal failed:', e); }
+  };
+  const handleDeleteCustomGoal = async (id) => {
+    setCustomGoals(customGoals.filter(g => g.id !== id));
+    try { await db.deleteCustomGoal(id); }
+    catch (e) { console.error('Delete custom goal failed:', e); }
+  };
+
+  // ---- Weight handlers ----
+  const handleSaveWeight = async (entryDate, weightKg) => {
+    try {
+      await db.upsertWeightEntry(userId, entryDate, weightKg);
+      const filtered = weightEntries.filter(w => w.date !== entryDate);
+      setWeightEntries([...filtered, { date: entryDate, weight: weightKg }]
+        .sort((a, b) => a.date.localeCompare(b.date)));
+    } catch (e) { console.error('Save weight failed:', e); }
+  };
+  const handleDeleteWeight = async (entryDate) => {
+    try {
+      await db.deleteWeightEntry(userId, entryDate);
+      setWeightEntries(weightEntries.filter(w => w.date !== entryDate));
+    } catch (e) { console.error('Delete weight failed:', e); }
+  };
+
+  const resetData = async () => {
+    if (!confirm('Reset all data? This deletes everything and reseeds with demo data.')) return;
+    try {
+      await db.clearAllUserData(userId);
+      setSeeding(true);
+      await db.seedMockHistory(userId);
+      setSeeding(false);
+      const [t, wa, ot, c] = await Promise.all([
+        db.fetchTemplates(), db.fetchWeekAssignments(),
+        db.fetchOneTimeTasks(), db.fetchCompletions(),
+      ]);
+      setTemplates(t); setWeekAssignments(wa); setOneTimeTasks(ot); setCompleted(c);
+    } catch (e) { console.error('Reset failed:', e); }
+  };
+
+  // Get tasks for a specific date
+  const getTasksForDate = (dKey, dow) => {
+    const tid = weekAssignments[dow];
+    const tplTasks = tid ? (getTemplate(tid)?.tasks || []).map(t => ({ ...t, isOneTime: false })) : [];
+    const oneTimes = (oneTimeTasks[dKey] || []).map(t => ({ ...t, isOneTime: true }));
+    return [...tplTasks, ...oneTimes].sort((a, b) => a.time.localeCompare(b.time));
+  };
+
+  // Today's progress for hero phrase
+  const todayTasks = getTasksForDate(todayKey, todayIdx);
+  const todayDone = todayTasks.filter(t => completed.has(completionKey(todayKey, t.id, t.isOneTime))).length;
+  const todayPct = todayTasks.length > 0 ? Math.round((todayDone / todayTasks.length) * 100) : 0;
+  const hero = heroPhrase(todayPct, todayTasks.length > 0);
+
+  if (!loaded || seeding) {
+    return (
+      <div style={{
+        minHeight: '100vh', background: '#FAFAF7',
+        display: 'grid', placeItems: 'center',
+        fontFamily: "'Inter Tight', system-ui, sans-serif",
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <div className="mono" style={{ fontSize: 11, color: '#737373', letterSpacing: '0.2em' }}>
+            {seeding ? 'SETTING UP YOUR ROUTINE…' : 'LOADING…'}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      minHeight: '100vh', background: '#FAFAF7',
+      fontFamily: "'Inter Tight', system-ui, sans-serif", color: '#0A0A0A',
+      paddingBottom: 90,
+    }}>
+      <GlobalStyles />
 
       <header className="header-padding" style={{
-        padding: '24px 32px', borderBottom: '1px solid rgba(0,0,0,0.06)',
+        padding: '20px 32px', borderBottom: '1px solid rgba(0,0,0,0.06)',
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         position: 'sticky', top: 0, background: 'rgba(250,250,247,0.85)',
         backdropFilter: 'blur(12px)', zIndex: 10, gap: 12,
@@ -307,7 +260,8 @@ export default function ScheduleApp({ session }) {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <nav className="desktop-nav" style={{ gap: 4, background: 'rgba(0,0,0,0.04)', padding: 4, borderRadius: 999 }}>
-            <button className={`pill-tab ${view === 'week' ? 'active' : ''}`} onClick={() => setView('week')}>This Week</button>
+            <button className={`pill-tab ${view === 'week' ? 'active' : ''}`} onClick={() => setView('week')}>Week</button>
+            <button className={`pill-tab ${view === 'stats' ? 'active' : ''}`} onClick={() => setView('stats')}>Stats</button>
             <button className={`pill-tab ${view === 'templates' ? 'active' : ''}`} onClick={() => setView('templates')}>Templates</button>
           </nav>
           <button onClick={handleSignOut} className="btn-ghost" style={{ padding: 8, color: '#737373' }} title="Sign out">
@@ -316,15 +270,35 @@ export default function ScheduleApp({ session }) {
         </div>
       </header>
 
-      {view === 'week' ? (
+      {view === 'week' && (
         <WeekView
-          templates={templates} weekAssignments={weekAssignments} setWeekAssignments={handleSetWeekAssignments}
-          oneTimeTasks={oneTimeTasks} completed={completed} toggleComplete={toggleComplete}
-          getTemplate={getTemplate} showDayDetail={showDayDetail} setShowDayDetail={setShowDayDetail}
+          templates={templates} weekAssignments={weekAssignments}
+          setWeekAssignments={handleSetWeekAssignments}
+          oneTimeTasks={oneTimeTasks} completed={completed}
+          toggleComplete={toggleComplete} getTemplate={getTemplate}
+          showDayDetail={showDayDetail} setShowDayDetail={setShowDayDetail}
           addOneTimeTask={addOneTimeTask} removeOneTimeTask={removeOneTimeTask}
-          weekDates={weekDates} todayIdx={todayIdx}
+          weekDates={weekDates} todayIdx={todayIdx} todayKey={todayKey}
+          hero={hero}
         />
-      ) : (
+      )}
+      {view === 'stats' && (
+        <StatsView
+          templates={templates} weekAssignments={weekAssignments}
+          oneTimeTasks={oneTimeTasks} completed={completed}
+          getTemplate={getTemplate} goals={goals}
+          customGoals={customGoals}
+          onAddCustomGoal={handleAddCustomGoal}
+          onUpdateCustomGoal={handleUpdateCustomGoal}
+          onDeleteCustomGoal={handleDeleteCustomGoal}
+          weightEntries={weightEntries}
+          onSaveWeight={handleSaveWeight}
+          onDeleteWeight={handleDeleteWeight}
+          todayKey={todayKey}
+          onEditGoals={() => setEditingGoals(true)}
+        />
+      )}
+      {view === 'templates' && (
         <TemplatesView
           templates={templates} setTemplates={setTemplates}
           editingTemplate={editingTemplate} setEditingTemplate={setEditingTemplate}
@@ -333,109 +307,136 @@ export default function ScheduleApp({ session }) {
         />
       )}
 
-      {/* Mobile bottom nav */}
+      {/* Mobile bottom nav: Week / Stats / + / Templates */}
       <nav className="mobile-nav">
         <button
           className={`mobile-nav-tab ${view === 'week' ? 'active' : ''}`}
           onClick={() => setView('week')}
+          aria-label="Week"
         >
           <LayoutGrid size={20} />
           <span className="mobile-nav-label">Week</span>
         </button>
         <button
+          className={`mobile-nav-tab ${view === 'stats' ? 'active' : ''}`}
+          onClick={() => setView('stats')}
+          aria-label="Stats"
+        >
+          <BarChart3 size={20} />
+          <span className="mobile-nav-label">Stats</span>
+        </button>
+        <button
           className="mobile-nav-tab fab"
-          onClick={() => {
-            setView('week');
-            setShowDayDetail(todayIdx);
-          }}
+          onClick={() => { setView('week'); setShowDayDetail(todayKey); }}
           aria-label="Quick add to today"
         >
-          <Plus size={24} strokeWidth={2.5} />
+          <Plus size={26} strokeWidth={2.6} />
         </button>
         <button
           className={`mobile-nav-tab ${view === 'templates' ? 'active' : ''}`}
           onClick={() => setView('templates')}
+          aria-label="Templates"
         >
           <Library size={20} />
           <span className="mobile-nav-label">Templates</span>
         </button>
       </nav>
+
+      {editingGoals && (
+        <GoalsEditor goals={goals} onSave={(g) => { handleSaveGoals(g); setEditingGoals(false); }}
+                     onClose={() => setEditingGoals(false)} />
+      )}
     </div>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Week View
+// ---------------------------------------------------------------------------
+
 function WeekView({
-  templates, weekAssignments, setWeekAssignments, oneTimeTasks, completed, toggleComplete,
-  getTemplate, showDayDetail, setShowDayDetail, addOneTimeTask, removeOneTimeTask,
-  weekDates, todayIdx,
+  templates, weekAssignments, setWeekAssignments, oneTimeTasks, completed,
+  toggleComplete, getTemplate, showDayDetail, setShowDayDetail,
+  addOneTimeTask, removeOneTimeTask, weekDates, todayIdx, todayKey, hero,
 }) {
-  const getDayTasks = (dayIdx) => {
-    const tid = weekAssignments[dayIdx];
-    const templateTasks = tid ? (getTemplate(tid)?.tasks || []).map(t => ({ ...t, isOneTime: false })) : [];
-    const oneTimes = (oneTimeTasks[dayIdx] || []).map(t => ({ ...t, isOneTime: true }));
-    return [...templateTasks, ...oneTimes].sort((a, b) => a.time.localeCompare(b.time));
+  const carouselRef = useRef(null);
+  const dayRefs = useRef([]);
+
+  // Scroll today into view on mobile load
+  useEffect(() => {
+    if (window.innerWidth < 700 && dayRefs.current[todayIdx]) {
+      dayRefs.current[todayIdx].scrollIntoView({ behavior: 'instant', block: 'nearest', inline: 'start' });
+    }
+  }, [todayIdx]);
+
+  const getDayTasks = (dKey, dow) => {
+    const tid = weekAssignments[dow];
+    const tpl = tid ? (getTemplate(tid)?.tasks || []).map(t => ({ ...t, isOneTime: false })) : [];
+    const oo = (oneTimeTasks[dKey] || []).map(t => ({ ...t, isOneTime: true }));
+    return [...tpl, ...oo].sort((a, b) => a.time.localeCompare(b.time));
   };
 
+  // Week-level stats
   const stats = { workouts: 0, boxing: 0, office: 0, wfh: 0 };
   let totalTasks = 0, completedTasks = 0;
-  Object.keys(weekAssignments).forEach(dayIdx => {
-    const tasks = getDayTasks(parseInt(dayIdx));
+  weekDates.forEach((d, idx) => {
+    const dKey = dateKey(d);
+    const tasks = getDayTasks(dKey, idx);
     tasks.forEach(task => {
       totalTasks++;
-      const key = completionKey(dayIdx, task.id, task.isOneTime);
-      if (completed.has(key)) completedTasks++;
-      if (task.category === 'workout') stats.workouts++;
-      if (task.category === 'boxing') stats.boxing++;
-      if (task.category === 'office') stats.office++;
-      if (task.category === 'wfh') stats.wfh++;
+      const k = completionKey(dKey, task.id, task.isOneTime);
+      if (completed.has(k)) completedTasks++;
+      if (stats[task.category] !== undefined) stats[task.category]++;
     });
   });
   const completionPct = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
+  // Streak: consecutive days from today backward where day.done === day.total (skip empty days)
   const streak = (() => {
     let count = 0;
     for (let i = todayIdx; i >= 0; i--) {
-      const tasks = getDayTasks(i);
+      const dKey = dateKey(weekDates[i]);
+      const tasks = getDayTasks(dKey, i);
       if (tasks.length === 0) continue;
-      const allDone = tasks.every(t => completed.has(completionKey(i, t.id, t.isOneTime)));
+      const allDone = tasks.every(t => completed.has(completionKey(dKey, t.id, t.isOneTime)));
       if (allDone) count++; else break;
     }
     return count;
   })();
 
-  const weekNum = Math.ceil(((weekDates[0] - new Date(weekDates[0].getFullYear(), 0, 1)) / 86400000 + new Date(weekDates[0].getFullYear(), 0, 1).getDay() + 1) / 7);
+  const weekNum = Math.ceil(((weekDates[0] - new Date(weekDates[0].getFullYear(), 0, 1)) / 86400000
+                  + new Date(weekDates[0].getFullYear(), 0, 1).getDay() + 1) / 7);
 
   return (
-    <main className="main-padding" style={{ padding: '32px', maxWidth: 1400, margin: '0 auto' }}>
-      <div style={{ marginBottom: 32 }}>
+    <main className="main-padding" style={{ padding: '24px 32px', maxWidth: 1400, margin: '0 auto' }}>
+      <div style={{ marginBottom: 24 }}>
         <div className="mono" style={{ fontSize: 11, color: '#737373', letterSpacing: '0.15em', marginBottom: 8 }}>
           WEEK {weekNum} · {formatDateRange(weekDates).toUpperCase()}
         </div>
-        <h1 className="hero-title display-font" style={{ fontSize: 'clamp(40px, 6vw, 68px)', fontWeight: 600, lineHeight: 1, margin: 0 }}>
-          Plan the week<span style={{ color: '#FF4D2E' }}>,</span><br/>
-          <span style={{ fontStyle: 'normal', fontFamily: 'Inter Tight', fontWeight: 700, letterSpacing: '-0.04em' }}>
-            ship the day.
-          </span>
+        <h1 className="hero-title display-font" style={{
+          fontSize: 'clamp(36px, 6vw, 64px)', fontWeight: 600, lineHeight: 1, margin: 0,
+        }}>
+          {hero.lead}<span style={{ color: '#FF4D2E' }}>{hero.tail}</span>
         </h1>
       </div>
 
       <div className="stats-strip" style={{
-        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 0,
-        marginBottom: 28, background: 'white', borderRadius: 16,
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 0,
+        marginBottom: 24, background: 'white', borderRadius: 16,
         border: '1px solid rgba(0,0,0,0.06)', overflow: 'hidden',
       }}>
-        <div style={{ padding: 20, borderRight: '1px solid rgba(0,0,0,0.06)' }}>
+        <div style={{ padding: 18, borderRight: '1px solid rgba(0,0,0,0.06)' }}>
           <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.1em', marginBottom: 8 }}>
             WEEK PROGRESS
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 8 }}>
-            <span className="stat-num" style={{ color: '#0A0A0A' }}>{completionPct}%</span>
+            <span className="stat-num">{completionPct}%</span>
             <span className="mono" style={{ fontSize: 11, color: '#737373' }}>{completedTasks}/{totalTasks}</span>
           </div>
           <div className="progress-bar"><div className="progress-fill" style={{ width: `${completionPct}%` }} /></div>
         </div>
-        <div style={{ padding: 20, borderRight: '1px solid rgba(0,0,0,0.06)', display: 'flex', alignItems: 'center', gap: 14 }}>
-          <Flame size={24} color={streak > 0 ? '#FF4D2E' : '#A3A3A3'} />
+        <div style={{ padding: 18, borderRight: '1px solid rgba(0,0,0,0.06)', display: 'flex', alignItems: 'center', gap: 14 }}>
+          <Flame size={22} color={streak > 0 ? '#FF4D2E' : '#A3A3A3'} />
           <div>
             <div className="stat-num" style={{ color: streak > 0 ? '#FF4D2E' : '#A3A3A3' }}>{streak}</div>
             <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.1em', marginTop: 4 }}>DAY STREAK</div>
@@ -446,30 +447,35 @@ function WeekView({
         <StatBox num={stats.office + stats.wfh} label="Work days" color="#0F172A" />
       </div>
 
-      <div className="week-grid">
+      <div className="week-grid" ref={carouselRef}>
         {DAYS.map((day, idx) => {
+          const date = weekDates[idx];
+          const dKey = dateKey(date);
           const tid = weekAssignments[idx];
           const template = tid ? getTemplate(tid) : null;
-          const tasks = getDayTasks(idx);
-          const oneTimeCount = (oneTimeTasks[idx] || []).length;
+          const tasks = getDayTasks(dKey, idx);
+          const oneTimeCount = (oneTimeTasks[dKey] || []).length;
           const isToday = idx === todayIdx;
-          const dayCompleted = tasks.filter(t => completed.has(completionKey(idx, t.id, t.isOneTime))).length;
-          const dayPct = tasks.length > 0 ? (dayCompleted / tasks.length) * 100 : 0;
-          const dateNum = weekDates[idx].getDate();
+          const dayDone = tasks.filter(t => completed.has(completionKey(dKey, t.id, t.isOneTime))).length;
+          const dayPct = tasks.length > 0 ? (dayDone / tasks.length) * 100 : 0;
 
           return (
             <div
               key={day}
+              ref={(el) => { dayRefs.current[idx] = el; }}
               className={`day-card ${!template && !oneTimeCount ? 'empty' : ''} ${isToday ? 'today' : ''}`}
-              onClick={() => setShowDayDetail(idx)}
+              onClick={() => setShowDayDetail(dKey)}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 14 }}>
                 <div>
                   <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.15em' }}>{day}</div>
-                  <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em', marginTop: 2 }}>{dateNum}</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em', marginTop: 2 }}>{date.getDate()}</div>
                 </div>
                 {isToday && (
-                  <span className="mono" style={{ fontSize: 9, padding: '3px 7px', background: '#FF4D2E', color: 'white', borderRadius: 4, letterSpacing: '0.1em', fontWeight: 600 }}>TODAY</span>
+                  <span className="mono" style={{
+                    fontSize: 9, padding: '3px 7px', background: '#FF4D2E',
+                    color: 'white', borderRadius: 4, letterSpacing: '0.1em', fontWeight: 600,
+                  }}>TODAY</span>
                 )}
               </div>
 
@@ -492,43 +498,50 @@ function WeekView({
                         <div className="progress-fill" style={{ width: `${dayPct}%` }} />
                       </div>
                       <div className="mono" style={{ fontSize: 9, color: '#737373', marginTop: 4, letterSpacing: '0.1em' }}>
-                        {dayCompleted}/{tasks.length} DONE
+                        {dayDone}/{tasks.length} DONE
                       </div>
                     </div>
                   )}
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    {tasks.slice(0, 4).map(task => {
+                    {tasks.slice(0, 3).map(task => {
                       const cat = CATEGORY_STYLES[task.category];
                       const Icon = cat.icon;
-                      const key = completionKey(idx, task.id, task.isOneTime);
-                      const isComplete = completed.has(key);
+                      const k = completionKey(dKey, task.id, task.isOneTime);
+                      const isComplete = completed.has(k);
                       return (
-                        <div key={key} className={`task-row ${isComplete ? 'task-completed' : ''}`}>
+                        <div key={k} className={`task-row ${isComplete ? 'task-completed' : ''}`}>
                           <div className="task-icon" style={{ background: cat.bg, width: 22, height: 22 }}>
                             <Icon size={11} color={cat.color} />
                           </div>
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <div className="task-title" style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <div className="task-title" style={{
+                              fontSize: 12, fontWeight: 500, overflow: 'hidden',
+                              textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              display: 'flex', alignItems: 'center', gap: 6,
+                            }}>
                               {task.title}
                               {task.isOneTime && <span className="one-time-badge">1×</span>}
                             </div>
-                            <div className="mono" style={{ fontSize: 9, color: '#737373' }}>{task.time}</div>
+                            <div className="mono" style={{ fontSize: 9, color: '#737373' }}>{formatTime(task.time, task.endTime)}</div>
                           </div>
                           {isComplete && <Check size={12} color="#0A0A0A" />}
                         </div>
                       );
                     })}
-                    {tasks.length > 4 && (
+                    {tasks.length > 3 && (
                       <div className="mono" style={{ fontSize: 10, color: '#737373', padding: '4px 10px', letterSpacing: '0.05em' }}>
-                        + {tasks.length - 4} more
+                        + {tasks.length - 3} more
                       </div>
                     )}
                   </div>
                 </>
               ) : (
                 <div style={{ padding: '24px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, color: '#737373' }}>
-                  <div style={{ width: 36, height: 36, borderRadius: '50%', border: '1.5px dashed rgba(0,0,0,0.2)', display: 'grid', placeItems: 'center' }}>
+                  <div style={{
+                    width: 36, height: 36, borderRadius: '50%', border: '1.5px dashed rgba(0,0,0,0.2)',
+                    display: 'grid', placeItems: 'center',
+                  }}>
                     <Plus size={18} />
                   </div>
                   <span style={{ fontSize: 12, fontWeight: 500 }}>Tap to plan</span>
@@ -539,23 +552,29 @@ function WeekView({
         })}
       </div>
 
-      {showDayDetail !== null && (
-        <DayDetailModal
-          dayIdx={showDayDetail} templates={templates} weekAssignments={weekAssignments}
-          setWeekAssignments={setWeekAssignments} tasks={getDayTasks(showDayDetail)}
-          completed={completed} toggleComplete={toggleComplete} getTemplate={getTemplate}
-          addOneTimeTask={addOneTimeTask} removeOneTimeTask={removeOneTimeTask}
-          onClose={() => setShowDayDetail(null)} isToday={showDayDetail === todayIdx}
-          dateNum={weekDates[showDayDetail].getDate()}
-        />
-      )}
+      {showDayDetail !== null && (() => {
+        const dKey = showDayDetail;
+        const dow = new Date(dKey + 'T00:00:00').getDay();
+        const dateNum = new Date(dKey + 'T00:00:00').getDate();
+        return (
+          <DayDetailSheet
+            dateKey={dKey} dow={dow} dateNum={dateNum} isToday={dKey === todayKey}
+            templates={templates} weekAssignments={weekAssignments}
+            setWeekAssignments={setWeekAssignments}
+            tasks={getDayTasks(dKey, dow)}
+            completed={completed} toggleComplete={toggleComplete} getTemplate={getTemplate}
+            addOneTimeTask={addOneTimeTask} removeOneTimeTask={removeOneTimeTask}
+            onClose={() => setShowDayDetail(null)}
+          />
+        );
+      })()}
     </main>
   );
 }
 
 function StatBox({ num, label, color, border }) {
   return (
-    <div style={{ padding: 20, borderRight: border ? '1px solid rgba(0,0,0,0.06)' : 'none' }}>
+    <div style={{ padding: 18, borderRight: border ? '1px solid rgba(0,0,0,0.06)' : 'none' }}>
       <div className="stat-num" style={{ color }}>{num}</div>
       <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.1em', marginTop: 4 }}>
         {label.toUpperCase()}
@@ -564,29 +583,34 @@ function StatBox({ num, label, color, border }) {
   );
 }
 
-function DayDetailModal({
-  dayIdx, templates, weekAssignments, setWeekAssignments, tasks, completed, toggleComplete,
-  getTemplate, addOneTimeTask, removeOneTimeTask, onClose, isToday, dateNum,
+// ---------------------------------------------------------------------------
+// Day Detail (modal on desktop, bottom sheet on mobile)
+// ---------------------------------------------------------------------------
+
+function DayDetailSheet({
+  dateKey: dKey, dow, dateNum, isToday, templates, weekAssignments, setWeekAssignments,
+  tasks, completed, toggleComplete, getTemplate, addOneTimeTask, removeOneTimeTask, onClose,
 }) {
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [showAddOneTime, setShowAddOneTime] = useState(false);
-  const tid = weekAssignments[dayIdx];
+  const tid = weekAssignments[dow];
   const template = tid ? getTemplate(tid) : null;
   const templateTasks = tasks.filter(t => !t.isOneTime);
   const oneTimes = tasks.filter(t => t.isOneTime);
-  const dayCompleted = tasks.filter(t => completed.has(completionKey(dayIdx, t.id, t.isOneTime))).length;
-  const dayPct = tasks.length > 0 ? Math.round((dayCompleted / tasks.length) * 100) : 0;
+  const dayDone = tasks.filter(t => completed.has(completionKey(dKey, t.id, t.isOneTime))).length;
+  const dayPct = tasks.length > 0 ? Math.round((dayDone / tasks.length) * 100) : 0;
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+        <div className="sheet-handle" />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
           <div>
             <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.15em' }}>
               {isToday ? 'TODAY' : 'PLANNING'}
             </div>
-            <h2 className="display-font" style={{ fontSize: 32, fontWeight: 600, margin: '4px 0 0 0' }}>
-              {DAY_FULL[dayIdx]} {dateNum}
+            <h2 className="display-font" style={{ fontSize: 30, fontWeight: 600, margin: '4px 0 0 0' }}>
+              {DAY_FULL[dow]} {dateNum}
             </h2>
           </div>
           <button onClick={onClose} className="btn-ghost" style={{ padding: 8 }}><X size={18} /></button>
@@ -596,7 +620,7 @@ function DayDetailModal({
           <div style={{ marginTop: 16, marginBottom: 20 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
               <span className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.1em' }}>
-                {dayCompleted} OF {tasks.length} COMPLETE
+                {dayDone} OF {tasks.length} COMPLETE
               </span>
               <span className="mono" style={{ fontSize: 10, color: '#0A0A0A', fontWeight: 600 }}>{dayPct}%</span>
             </div>
@@ -618,7 +642,7 @@ function DayDetailModal({
                 <button
                   key={t.id}
                   onClick={() => {
-                    setWeekAssignments({ ...weekAssignments, [dayIdx]: t.id });
+                    setWeekAssignments({ ...weekAssignments, [dow]: t.id });
                     setShowTemplatePicker(false);
                   }}
                   style={{
@@ -638,7 +662,7 @@ function DayDetailModal({
               {tid && (
                 <button
                   onClick={() => {
-                    setWeekAssignments({ ...weekAssignments, [dayIdx]: null });
+                    setWeekAssignments({ ...weekAssignments, [dow]: null });
                     setShowTemplatePicker(false);
                   }}
                   style={{ padding: 10, borderRadius: 10, color: '#737373', fontSize: 12, border: '1.5px dashed rgba(0,0,0,0.15)', fontWeight: 500 }}
@@ -665,11 +689,9 @@ function DayDetailModal({
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
               {templateTasks.map(task => (
-                <TaskCheckRow
-                  key={task.id} task={task}
-                  isComplete={completed.has(completionKey(dayIdx, task.id, false))}
-                  onToggle={() => toggleComplete(completionKey(dayIdx, task.id, false))}
-                />
+                <TaskCheckRow key={task.id} task={task}
+                  isComplete={completed.has(completionKey(dKey, task.id, false))}
+                  onToggle={() => toggleComplete(dKey, task.id, false)} />
               ))}
             </div>
           </div>
@@ -684,33 +706,27 @@ function DayDetailModal({
           {oneTimes.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
               {oneTimes.map(task => (
-                <TaskCheckRow
-                  key={task.id} task={task}
-                  isComplete={completed.has(completionKey(dayIdx, task.id, true))}
-                  onToggle={() => toggleComplete(completionKey(dayIdx, task.id, true))}
-                  onRemove={() => removeOneTimeTask(dayIdx, task.id)}
-                />
+                <TaskCheckRow key={task.id} task={task}
+                  isComplete={completed.has(completionKey(dKey, task.id, true))}
+                  onToggle={() => toggleComplete(dKey, task.id, true)}
+                  onRemove={() => removeOneTimeTask(dKey, task.id)} />
               ))}
             </div>
           )}
 
           {showAddOneTime ? (
             <OneTimeComposer
-              onSave={(task) => { addOneTimeTask(dayIdx, task); setShowAddOneTime(false); }}
-              onCancel={() => setShowAddOneTime(false)}
-            />
+              onSave={(task) => { addOneTimeTask(dKey, task); setShowAddOneTime(false); }}
+              onCancel={() => setShowAddOneTime(false)} />
           ) : (
             <button
               onClick={() => setShowAddOneTime(true)}
               style={{
-                marginTop: 10, width: '100%', padding: 12, borderRadius: 12,
+                marginTop: 10, width: '100%', padding: 14, borderRadius: 12,
                 border: '1.5px dashed rgba(0,0,0,0.15)', color: '#525252',
-                fontSize: 13, fontWeight: 500, display: 'flex',
+                fontSize: 14, fontWeight: 500, display: 'flex',
                 alignItems: 'center', justifyContent: 'center', gap: 6,
-                transition: 'all 0.15s ease',
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#0A0A0A'; e.currentTarget.style.color = '#0A0A0A'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(0,0,0,0.15)'; e.currentTarget.style.color = '#525252'; }}
             >
               <Plus size={14} /> Add one-time task
             </button>
@@ -747,21 +763,21 @@ function TaskCheckRow({ task, isComplete, onToggle, onRemove }) {
         onClick={handleToggle}
         aria-label={isComplete ? 'Mark incomplete' : 'Mark complete'}
       >
-        {isComplete && <Check size={13} color="white" strokeWidth={3} />}
+        {isComplete && <Check size={16} color="white" strokeWidth={3} />}
       </button>
-      <span className="mono" style={{ fontSize: 11, color: '#737373', width: 42 }}>{task.time}</span>
+      <span className="mono" style={{ fontSize: 11, color: '#737373', minWidth: 42 }}>{formatTime(task.time, task.endTime)}</span>
       <div className="task-icon" style={{ background: cat.bg, width: 26, height: 26 }}>
         <Icon size={12} color={cat.color} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div className="task-title" style={{ fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div className="task-title" style={{ fontSize: 14, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8 }}>
           {task.title}
           {task.isOneTime && <span className="one-time-badge">1×</span>}
         </div>
       </div>
       {onRemove && (
-        <button onClick={onRemove} className="btn-ghost" style={{ padding: 4, color: '#A3A3A3' }}>
-          <X size={13} />
+        <button onClick={onRemove} className="btn-ghost" style={{ padding: 6, color: '#A3A3A3' }}>
+          <X size={14} />
         </button>
       )}
     </div>
@@ -771,11 +787,12 @@ function TaskCheckRow({ task, isComplete, onToggle, onRemove }) {
 function OneTimeComposer({ onSave, onCancel }) {
   const [title, setTitle] = useState('');
   const [time, setTime] = useState('09:00');
+  const [endTime, setEndTime] = useState('');
   const [category, setCategory] = useState('break');
 
   const save = () => {
     if (!title.trim()) return;
-    onSave({ title: title.trim(), time, category });
+    onSave({ title: title.trim(), time, endTime: endTime || null, category });
   };
 
   return (
@@ -784,38 +801,35 @@ function OneTimeComposer({ onSave, onCancel }) {
         {Object.entries(CATEGORY_STYLES).map(([key, cat]) => {
           const Icon = cat.icon;
           return (
-            <button
-              key={key}
-              onClick={() => setCategory(key)}
-              style={{
-                padding: '5px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600,
-                display: 'inline-flex', alignItems: 'center', gap: 4,
-                background: category === key ? cat.color : cat.bg,
-                color: category === key ? 'white' : cat.color,
-                transition: 'all 0.15s ease',
-              }}
-            >
+            <button key={key} onClick={() => setCategory(key)} style={{
+              padding: '6px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              background: category === key ? cat.color : cat.bg,
+              color: category === key ? 'white' : cat.color,
+              transition: 'all 0.15s ease',
+            }}>
               <Icon size={11} />
               {cat.label}
             </button>
           );
         })}
       </div>
-      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-        <input
-          className="input" autoFocus value={title}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+        <input className="input" autoFocus value={title}
           onChange={(e) => setTitle(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') onCancel(); }}
-          placeholder="What needs doing?" style={{ flex: 1 }}
-        />
-        <input
-          className="input" type="time" value={time}
-          onChange={(e) => setTime(e.target.value)} style={{ width: 110 }}
-        />
+          placeholder="What needs doing?" style={{ flex: 1, minWidth: 140 }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <input className="input" type="time" value={time}
+            onChange={(e) => setTime(e.target.value)} style={{ width: 110 }} />
+          <span style={{ fontSize: 12, color: '#737373' }}>–</span>
+          <input className="input" type="time" value={endTime}
+            onChange={(e) => setEndTime(e.target.value)} style={{ width: 110 }} />
+        </div>
       </div>
       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-        <button onClick={onCancel} className="btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
-        <button onClick={save} className="btn-primary" style={{ fontSize: 12, padding: '8px 14px' }}>
+        <button onClick={onCancel} className="btn-ghost" style={{ fontSize: 13 }}>Cancel</button>
+        <button onClick={save} className="btn-primary" style={{ fontSize: 13, padding: '10px 16px' }}>
           <Check size={14} /> Add task
         </button>
       </div>
@@ -823,8 +837,690 @@ function OneTimeComposer({ onSave, onCancel }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Stats View
+// ---------------------------------------------------------------------------
+
+function StatsView({
+  templates, weekAssignments, oneTimeTasks, completed, getTemplate, goals,
+  customGoals, onAddCustomGoal, onUpdateCustomGoal, onDeleteCustomGoal,
+  weightEntries, onSaveWeight, onDeleteWeight, todayKey, onEditGoals,
+}) {
+  const [windowMode, setWindowMode] = useState('rolling'); // 'rolling' | 'month' | 'quarter' | 'year'
+  const [showCreateGoal, setShowCreateGoal] = useState(false);
+  const [weightWindow, setWeightWindow] = useState('month'); // 'month' | 'quarter' | 'year'
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const { startDate, endDate, label, totalDays } = (() => {
+    if (windowMode === 'rolling') {
+      return { startDate: addDays(today, -27), endDate: today, label: 'LAST 4 WEEKS', totalDays: 28 };
+    } else if (windowMode === 'month') {
+      const start = new Date(today.getFullYear(), today.getMonth(), 1);
+      const days = Math.round((today - start) / 86400000) + 1;
+      return { startDate: start, endDate: today, label: 'THIS MONTH', totalDays: days };
+    } else if (windowMode === 'quarter') {
+      return { startDate: addDays(today, -89), endDate: today, label: 'LAST 3 MONTHS', totalDays: 90 };
+    } else {
+      return { startDate: addDays(today, -364), endDate: today, label: 'LAST 12 MONTHS', totalDays: 365 };
+    }
+  })();
+
+  // Walk every day in window
+  let totalTasks = 0, completedTasks = 0;
+  let activeDays = 0;
+  const totals = { workout: 0, boxing: 0, office: 0, wfh: 0, break: 0, custom: 0 };
+  const completedByCat = { workout: 0, boxing: 0, office: 0, wfh: 0, break: 0, custom: 0 };
+
+  for (let d = new Date(startDate); d <= endDate; d = addDays(d, 1)) {
+    const dKey = dateKey(d);
+    const dow = d.getDay();
+    const tid = weekAssignments[dow];
+    const tplTasks = tid ? (getTemplate(tid)?.tasks || []) : [];
+    const oneTimes = oneTimeTasks[dKey] || [];
+    const allTasks = [
+      ...tplTasks.map(t => ({ ...t, isOneTime: false })),
+      ...oneTimes.map(t => ({ ...t, isOneTime: true })),
+    ];
+    let dayDone = 0;
+    allTasks.forEach(task => {
+      totalTasks++;
+      totals[task.category] = (totals[task.category] || 0) + 1;
+      if (completed.has(completionKey(dKey, task.id, task.isOneTime))) {
+        completedTasks++;
+        completedByCat[task.category] = (completedByCat[task.category] || 0) + 1;
+        dayDone++;
+      }
+    });
+    if (dayDone > 0) activeDays++;
+  }
+
+  // Streak from today backward (skip days with 0 tasks)
+  const streak = (() => {
+    let count = 0;
+    for (let d = new Date(today); ; d = addDays(d, -1)) {
+      const dKey = dateKey(d);
+      const dow = d.getDay();
+      const tid = weekAssignments[dow];
+      const tplTasks = tid ? (getTemplate(tid)?.tasks || []) : [];
+      const oneTimes = oneTimeTasks[dKey] || [];
+      const all = [
+        ...tplTasks.map(t => ({ ...t, isOneTime: false })),
+        ...oneTimes.map(t => ({ ...t, isOneTime: true })),
+      ];
+      if (all.length === 0) {
+        if (count > 60) break;
+        if ((today - d) > 60 * 86400000) break;
+        continue;
+      }
+      const allDone = all.every(t => completed.has(completionKey(dKey, t.id, t.isOneTime)));
+      if (allDone) count++; else break;
+    }
+    return count;
+  })();
+
+  const completionPct = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+  const weeks = totalDays / 7;
+
+  const builtInGoalCards = [
+    { key: 'workouts', cat: 'workout', label: 'Workouts',   weeklyGoal: goals.workouts },
+    { key: 'boxing',   cat: 'boxing',  label: 'Boxing',     weeklyGoal: goals.boxing   },
+    { key: 'office',   cat: 'office',  label: 'Office days',weeklyGoal: goals.office   },
+    { key: 'wfh',      cat: 'wfh',     label: 'WFH days',   weeklyGoal: goals.wfh      },
+  ].map(g => goalCardFromTotals(g, completedByCat, totals, weeks));
+
+  const customGoalCards = customGoals.map(g =>
+    goalCardFromTotals(
+      { key: g.id, cat: g.category, label: g.name, weeklyGoal: g.weeklyTarget, custom: true, id: g.id },
+      completedByCat, totals, weeks
+    )
+  );
+
+  return (
+    <main className="main-padding" style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 24, flexWrap: 'wrap', gap: 16 }}>
+        <div>
+          <div className="mono" style={{ fontSize: 11, color: '#737373', letterSpacing: '0.15em', marginBottom: 8 }}>
+            PROGRESS
+          </div>
+          <h1 className="hero-title display-font" style={{ fontSize: 'clamp(36px, 5vw, 56px)', fontWeight: 600, lineHeight: 1, margin: 0 }}>
+            How's the run<span style={{ color: '#FF4D2E' }}>?</span>
+          </h1>
+        </div>
+        <div className="period-toggle" style={{ display: 'flex', gap: 4, background: 'rgba(0,0,0,0.04)', padding: 4, borderRadius: 999, flexWrap: 'wrap' }}>
+          <button className={`pill-tab ${windowMode === 'rolling' ? 'active' : ''}`} onClick={() => setWindowMode('rolling')}>4 weeks</button>
+          <button className={`pill-tab ${windowMode === 'month' ? 'active' : ''}`} onClick={() => setWindowMode('month')}>This month</button>
+          <button className={`pill-tab ${windowMode === 'quarter' ? 'active' : ''}`} onClick={() => setWindowMode('quarter')}>3 months</button>
+          <button className={`pill-tab ${windowMode === 'year' ? 'active' : ''}`} onClick={() => setWindowMode('year')}>1 year</button>
+        </div>
+      </div>
+
+      {/* Hero card */}
+      <div style={{
+        background: 'linear-gradient(135deg, #0A0A0A 0%, #1F1F1F 100%)',
+        color: '#FAFAF7', borderRadius: 24, padding: 28, marginBottom: 20,
+        position: 'relative', overflow: 'hidden',
+      }}>
+        <div style={{
+          position: 'absolute', top: -40, right: -40, width: 180, height: 180,
+          borderRadius: '50%', background: 'rgba(255, 77, 46, 0.18)', filter: 'blur(40px)',
+        }} />
+        <div style={{ position: 'relative' }}>
+          <div className="mono" style={{ fontSize: 10, color: 'rgba(250,250,247,0.5)', letterSpacing: '0.15em', marginBottom: 10 }}>
+            {label}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 16 }}>
+            <span className="display-font" style={{ fontSize: 72, fontWeight: 600, fontStyle: 'italic', lineHeight: 1 }}>
+              {completionPct}<span style={{ color: '#FF4D2E' }}>%</span>
+            </span>
+            <span className="mono" style={{ fontSize: 12, color: 'rgba(250,250,247,0.6)' }}>
+              {completedTasks} / {totalTasks} tasks
+            </span>
+          </div>
+          <div className="progress-bar" style={{ background: 'rgba(255,255,255,0.1)', marginBottom: 20 }}>
+            <div className="progress-fill" style={{ width: `${completionPct}%` }} />
+          </div>
+          <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Flame size={16} color="#FF4D2E" />
+                <span style={{ fontFamily: "'Fraunces', serif", fontStyle: 'italic', fontWeight: 600, fontSize: 24 }}>{streak}</span>
+              </div>
+              <div className="mono" style={{ fontSize: 9, color: 'rgba(250,250,247,0.5)', letterSpacing: '0.15em', marginTop: 4 }}>
+                DAY STREAK
+              </div>
+            </div>
+            <div>
+              <div style={{ fontFamily: "'Fraunces', serif", fontStyle: 'italic', fontWeight: 600, fontSize: 24 }}>
+                {activeDays}<span style={{ color: 'rgba(250,250,247,0.4)', fontSize: 18 }}>/{totalDays}</span>
+              </div>
+              <div className="mono" style={{ fontSize: 9, color: 'rgba(250,250,247,0.5)', letterSpacing: '0.15em', marginTop: 4 }}>
+                ACTIVE DAYS
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Weight tracker */}
+      <WeightTracker
+        weightEntries={weightEntries} todayKey={todayKey}
+        onSave={onSaveWeight} onDelete={onDeleteWeight}
+        windowMode={weightWindow} setWindowMode={setWeightWindow}
+      />
+
+      {/* Goals header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 28, marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+        <span className="mono" style={{ fontSize: 11, color: '#737373', letterSpacing: '0.15em', fontWeight: 600 }}>
+          WEEKLY GOALS
+        </span>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={() => setShowCreateGoal(true)} className="btn-ghost" style={{ fontSize: 12, padding: '6px 12px', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Plus size={13} /> New goal
+          </button>
+          <button onClick={onEditGoals} className="btn-ghost" style={{ fontSize: 12, padding: '6px 12px', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Settings size={13} /> Defaults
+          </button>
+        </div>
+      </div>
+
+      <div className="goals-grid" style={{ display: 'grid', gap: 12 }}>
+        {builtInGoalCards.map(g => <GoalCard key={g.key} g={g} />)}
+        {customGoalCards.map(g => (
+          <GoalCard key={g.key} g={g}
+            onUpdate={(patch) => onUpdateCustomGoal(g.id, patch)}
+            onDelete={() => {
+              if (confirm(`Delete goal "${g.label}"?`)) onDeleteCustomGoal(g.id);
+            }} />
+        ))}
+      </div>
+
+      {showCreateGoal && (
+        <CustomGoalEditor
+          onSave={(g) => { onAddCustomGoal(g); setShowCreateGoal(false); }}
+          onClose={() => setShowCreateGoal(false)} />
+      )}
+    </main>
+  );
+}
+
+function goalCardFromTotals(g, completedByCat, totals, weeks) {
+  const target = Math.max(1, Math.round(g.weeklyGoal * weeks));
+  const actual = completedByCat[g.cat] || 0;
+  const planned = totals[g.cat] || 0;
+  const pct = Math.min(100, Math.round((actual / target) * 100));
+  return { ...g, target, actual, planned, pct };
+}
+
+function GoalCard({ g, onUpdate, onDelete }) {
+  const cat = CATEGORY_STYLES[g.cat];
+  const Icon = cat.icon;
+  const onTrack = g.pct >= 90;
+  const behind = g.pct < 50;
+  const [editing, setEditing] = useState(false);
+  const [draftTarget, setDraftTarget] = useState(g.weeklyGoal);
+
+  return (
+    <div style={{
+      background: 'white', borderRadius: 16, padding: 18,
+      border: '1px solid rgba(0,0,0,0.06)',
+      position: 'relative',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+          <div className="task-icon" style={{ background: cat.bg, width: 36, height: 36, borderRadius: 10 }}>
+            <Icon size={18} color={cat.color} />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 600, fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {g.label}
+              {g.custom && <span className="one-time-badge" style={{ marginLeft: 8 }}>CUSTOM</span>}
+            </div>
+            <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.1em', marginTop: 2 }}>
+              {g.weeklyGoal}/WEEK GOAL
+            </div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {onTrack && (
+            <span className="mono" style={{ fontSize: 9, padding: '3px 7px', background: 'rgba(34,197,94,0.12)', color: '#16A34A', borderRadius: 4, letterSpacing: '0.1em', fontWeight: 600 }}>ON TRACK</span>
+          )}
+          {behind && (
+            <span className="mono" style={{ fontSize: 9, padding: '3px 7px', background: 'rgba(220,38,38,0.10)', color: '#DC2626', borderRadius: 4, letterSpacing: '0.1em', fontWeight: 600 }}>BEHIND</span>
+          )}
+          {g.custom && (
+            <>
+              <button className="btn-ghost" style={{ padding: 6 }} onClick={() => { setDraftTarget(g.weeklyGoal); setEditing(true); }}><Edit2 size={13} /></button>
+              <button className="btn-ghost" style={{ padding: 6, color: '#DC2626' }} onClick={onDelete}><Trash2 size={13} /></button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {editing ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+          <span className="mono" style={{ fontSize: 11, color: '#737373' }}>WEEKLY TARGET</span>
+          <button onClick={() => setDraftTarget(Math.max(0, draftTarget - 1))} className="stepper-btn"><Minus size={14} /></button>
+          <span style={{ fontFamily: "'Fraunces', serif", fontStyle: 'italic', fontWeight: 600, fontSize: 22, minWidth: 24, textAlign: 'center' }}>{draftTarget}</span>
+          <button onClick={() => setDraftTarget(Math.min(21, draftTarget + 1))} className="stepper-btn"><Plus size={14} /></button>
+          <button className="btn-primary" style={{ marginLeft: 'auto', padding: '8px 12px', fontSize: 12 }} onClick={() => { onUpdate({ weeklyTarget: draftTarget }); setEditing(false); }}>
+            <Check size={13} /> Save
+          </button>
+          <button className="btn-ghost" style={{ fontSize: 12, padding: '6px 8px' }} onClick={() => setEditing(false)}>Cancel</button>
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
+            <span className="display-font" style={{ fontSize: 36, fontWeight: 600, fontStyle: 'italic', color: cat.color, lineHeight: 1 }}>
+              {g.actual}
+            </span>
+            <span className="mono" style={{ fontSize: 12, color: '#737373' }}>/ {g.target}</span>
+            <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 600 }}>{g.pct}%</span>
+          </div>
+          <div className="progress-bar" style={{ marginBottom: 8 }}>
+            <div className="progress-fill" style={{ width: `${g.pct}%`, background: cat.color }} />
+          </div>
+          {g.planned > g.actual && (
+            <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.05em' }}>
+              {g.actual} done · {g.planned - g.actual} planned but not completed
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Custom goal editor
+// ---------------------------------------------------------------------------
+
+function CustomGoalEditor({ onSave, onClose }) {
+  const [name, setName] = useState('');
+  const [category, setCategory] = useState('custom');
+  const [target, setTarget] = useState(3);
+
+  const save = () => {
+    if (!name.trim()) return;
+    onSave({ name: name.trim(), category, weeklyTarget: target });
+  };
+
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460 }}>
+        <div className="sheet-handle" />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18 }}>
+          <div>
+            <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.15em' }}>
+              CUSTOM GOAL
+            </div>
+            <h2 className="display-font" style={{ fontSize: 28, fontWeight: 600, margin: '4px 0 0 0' }}>
+              New target
+            </h2>
+          </div>
+          <button onClick={onClose} className="btn-ghost" style={{ padding: 8 }}><X size={18} /></button>
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.15em', display: 'block', marginBottom: 6 }}>
+            GOAL NAME
+          </label>
+          <input className="input" autoFocus value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
+            placeholder="e.g., Read, Meditate, Run..." />
+        </div>
+
+        <div style={{ marginBottom: 18 }}>
+          <label className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.15em', display: 'block', marginBottom: 8 }}>
+            COUNTS TASKS IN CATEGORY
+          </label>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {Object.entries(CATEGORY_STYLES).map(([key, cat]) => {
+              const Icon = cat.icon;
+              return (
+                <button key={key} onClick={() => setCategory(key)} style={{
+                  padding: '8px 12px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  background: category === key ? cat.color : cat.bg,
+                  color: category === key ? 'white' : cat.color,
+                }}>
+                  <Icon size={12} />
+                  {cat.label}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mono" style={{ fontSize: 10, color: '#737373', marginTop: 8, lineHeight: 1.5 }}>
+            Completed tasks of this category count toward this goal.
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 22 }}>
+          <label className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.15em', display: 'block', marginBottom: 10 }}>
+            WEEKLY TARGET
+          </label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', background: 'white', borderRadius: 12, border: '1px solid rgba(0,0,0,0.06)' }}>
+            <button onClick={() => setTarget(Math.max(0, target - 1))} className="stepper-btn"><Minus size={16} /></button>
+            <span style={{ fontFamily: "'Fraunces', serif", fontStyle: 'italic', fontWeight: 600, fontSize: 28, minWidth: 36, textAlign: 'center' }}>{target}</span>
+            <button onClick={() => setTarget(Math.min(21, target + 1))} className="stepper-btn"><Plus size={16} /></button>
+            <span className="mono" style={{ fontSize: 11, color: '#737373', marginLeft: 'auto' }}>per week</span>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" onClick={save}>
+            <Target size={15} /> Create goal
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Weight tracker + chart
+// ---------------------------------------------------------------------------
+
+function WeightTracker({ weightEntries, todayKey, onSave, onDelete, windowMode, setWindowMode }) {
+  const todayEntry = weightEntries.find(w => w.date === todayKey);
+  const [draft, setDraft] = useState(todayEntry ? String(todayEntry.weight) : '');
+  const [editing, setEditing] = useState(!todayEntry);
+
+  useEffect(() => {
+    setDraft(todayEntry ? String(todayEntry.weight) : '');
+    setEditing(!todayEntry);
+  }, [todayEntry?.weight, todayKey]);
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const days = windowMode === 'month' ? 30 : windowMode === 'quarter' ? 90 : 365;
+  const startDate = addDays(today, -(days - 1));
+  const startKey = dateKey(startDate);
+  const windowEntries = weightEntries
+    .filter(w => w.date >= startKey)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const latest = weightEntries.length > 0 ? weightEntries[weightEntries.length - 1] : null;
+  const first = windowEntries.length > 0 ? windowEntries[0] : null;
+  const delta = (latest && first && latest.date !== first.date) ? +(latest.weight - first.weight).toFixed(1) : null;
+
+  const save = () => {
+    const num = parseFloat(draft.replace(',', '.'));
+    if (!isNaN(num) && num > 0 && num < 500) {
+      onSave(todayKey, +num.toFixed(2));
+      setEditing(false);
+    }
+  };
+
+  return (
+    <div style={{
+      background: 'white', borderRadius: 20, padding: 22,
+      border: '1px solid rgba(0,0,0,0.06)', marginBottom: 8,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div className="task-icon" style={{ background: 'rgba(124, 58, 237, 0.10)', width: 36, height: 36, borderRadius: 10 }}>
+            <Scale size={18} color="#7C3AED" />
+          </div>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 15 }}>Daily weight</div>
+            <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.1em', marginTop: 2 }}>
+              {windowEntries.length} ENTRIES · KG
+            </div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 4, background: 'rgba(0,0,0,0.04)', padding: 4, borderRadius: 999 }}>
+          <button className={`pill-tab ${windowMode === 'month' ? 'active' : ''}`} onClick={() => setWindowMode('month')} style={{ padding: '6px 12px', fontSize: 12 }}>1M</button>
+          <button className={`pill-tab ${windowMode === 'quarter' ? 'active' : ''}`} onClick={() => setWindowMode('quarter')} style={{ padding: '6px 12px', fontSize: 12 }}>3M</button>
+          <button className={`pill-tab ${windowMode === 'year' ? 'active' : ''}`} onClick={() => setWindowMode('year')} style={{ padding: '6px 12px', fontSize: 12 }}>1Y</button>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div>
+          <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.1em', marginBottom: 4 }}>
+            {todayEntry ? "TODAY'S WEIGHT" : 'NO ENTRY TODAY'}
+          </div>
+          {editing ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                className="input"
+                type="number" step="0.1" inputMode="decimal" autoFocus
+                value={draft} onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { setEditing(false); setDraft(todayEntry ? String(todayEntry.weight) : ''); } }}
+                placeholder="kg" style={{ width: 120, fontSize: 18, fontWeight: 600 }}
+              />
+              <button className="btn-primary" onClick={save} style={{ padding: '10px 14px' }}>
+                <Check size={15} /> Save
+              </button>
+              {todayEntry && (
+                <button className="btn-ghost" onClick={() => { setEditing(false); setDraft(String(todayEntry.weight)); }}>Cancel</button>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+              <span className="display-font" style={{ fontSize: 40, fontWeight: 600, fontStyle: 'italic', color: '#7C3AED', lineHeight: 1 }}>
+                {todayEntry.weight.toFixed(1)}
+              </span>
+              <span className="mono" style={{ fontSize: 12, color: '#737373' }}>kg</span>
+              <button className="btn-ghost" onClick={() => setEditing(true)} style={{ padding: 6, marginLeft: 4 }}>
+                <Edit2 size={14} />
+              </button>
+              <button className="btn-ghost" onClick={() => { if (confirm("Delete today's weight entry?")) onDelete(todayKey); }} style={{ padding: 6, color: '#DC2626' }}>
+                <Trash2 size={14} />
+              </button>
+            </div>
+          )}
+        </div>
+        {delta !== null && (
+          <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+            <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.1em', marginBottom: 4 }}>
+              CHANGE
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'flex-end' }}>
+              <TrendingUp size={14} color={delta > 0 ? '#DC2626' : delta < 0 ? '#16A34A' : '#737373'}
+                style={{ transform: delta > 0 ? 'none' : 'rotate(180deg)' }} />
+              <span style={{ fontFamily: "'Fraunces', serif", fontStyle: 'italic', fontWeight: 600, fontSize: 20,
+                color: delta > 0 ? '#DC2626' : delta < 0 ? '#16A34A' : '#737373' }}>
+                {delta > 0 ? '+' : ''}{delta.toFixed(1)}
+              </span>
+              <span className="mono" style={{ fontSize: 10, color: '#737373' }}>kg</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <WeightChart entries={windowEntries} startDate={startDate} endDate={today} days={days} />
+    </div>
+  );
+}
+
+function WeightChart({ entries, startDate, endDate, days }) {
+  if (entries.length === 0) {
+    return (
+      <div style={{
+        height: 160, display: 'grid', placeItems: 'center',
+        border: '1.5px dashed rgba(0,0,0,0.1)', borderRadius: 12, color: '#737373',
+        fontSize: 13, padding: 16, textAlign: 'center',
+      }}>
+        Log your weight today to start tracking trends.
+      </div>
+    );
+  }
+
+  const W = 600, H = 180, PAD_L = 36, PAD_R = 8, PAD_T = 12, PAD_B = 22;
+  const innerW = W - PAD_L - PAD_R;
+  const innerH = H - PAD_T - PAD_B;
+
+  const weights = entries.map(e => e.weight);
+  let yMin = Math.min(...weights);
+  let yMax = Math.max(...weights);
+  const yRange = Math.max(1, yMax - yMin);
+  const pad = yRange * 0.15;
+  yMin = Math.floor((yMin - pad) * 2) / 2;
+  yMax = Math.ceil((yMax + pad) * 2) / 2;
+
+  const startMs = startDate.getTime();
+  const endMs = endDate.getTime();
+  const xScale = (dateStr) => {
+    const ms = new Date(dateStr + 'T00:00:00').getTime();
+    return PAD_L + ((ms - startMs) / Math.max(1, endMs - startMs)) * innerW;
+  };
+  const yScale = (w) => PAD_T + (1 - (w - yMin) / (yMax - yMin)) * innerH;
+
+  const points = entries.map(e => ({ x: xScale(e.date), y: yScale(e.weight), ...e }));
+  const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+  const areaD = points.length > 0
+    ? `${pathD} L ${points[points.length - 1].x.toFixed(1)} ${(PAD_T + innerH).toFixed(1)} L ${points[0].x.toFixed(1)} ${(PAD_T + innerH).toFixed(1)} Z`
+    : '';
+
+  // Y-axis ticks (3)
+  const yTicks = [yMin, (yMin + yMax) / 2, yMax];
+  // X-axis ticks: depend on window
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const xLabels = (() => {
+    if (days <= 31) {
+      return [0, Math.floor(days / 2), days - 1].map(off => {
+        const d = addDays(startDate, off);
+        return { x: xScale(dateKey(d)), label: `${d.getDate()} ${months[d.getMonth()]}` };
+      });
+    }
+    if (days <= 90) {
+      return [0, 30, 60, 89].map(off => {
+        const d = addDays(startDate, off);
+        return { x: xScale(dateKey(d)), label: months[d.getMonth()] };
+      });
+    }
+    return [0, 91, 182, 273, 364].map(off => {
+      const d = addDays(startDate, off);
+      return { x: xScale(dateKey(d)), label: months[d.getMonth()] };
+    });
+  })();
+
+  return (
+    <div style={{ width: '100%', position: 'relative' }}>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: '100%', height: 180, display: 'block' }}>
+        <defs>
+          <linearGradient id="wgrad" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#7C3AED" stopOpacity="0.25" />
+            <stop offset="100%" stopColor="#7C3AED" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {/* Y gridlines */}
+        {yTicks.map((t, i) => {
+          const y = yScale(t);
+          return (
+            <g key={i}>
+              <line x1={PAD_L} x2={W - PAD_R} y1={y} y2={y} stroke="rgba(0,0,0,0.06)" strokeWidth="1" />
+              <text x={PAD_L - 6} y={y + 3} textAnchor="end" fontSize="10" fill="#A3A3A3" fontFamily="JetBrains Mono, monospace">
+                {t.toFixed(1)}
+              </text>
+            </g>
+          );
+        })}
+        {/* Area + line */}
+        {areaD && <path d={areaD} fill="url(#wgrad)" />}
+        <path d={pathD} fill="none" stroke="#7C3AED" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        {/* Points (only if not too many) */}
+        {points.length <= 60 && points.map((p, i) => (
+          <circle key={i} cx={p.x} cy={p.y} r="2.5" fill="#7C3AED">
+            <title>{p.date}: {p.weight.toFixed(1)} kg</title>
+          </circle>
+        ))}
+        {/* X labels */}
+        {xLabels.map((t, i) => (
+          <text key={i} x={t.x} y={H - 6} textAnchor="middle" fontSize="10" fill="#A3A3A3" fontFamily="JetBrains Mono, monospace">
+            {t.label}
+          </text>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Goals Editor
+// ---------------------------------------------------------------------------
+
+function GoalsEditor({ goals, onSave, onClose }) {
+  const [draft, setDraft] = useState({ ...goals });
+  const fields = [
+    { key: 'workouts', label: 'Workouts', cat: 'workout' },
+    { key: 'boxing',   label: 'Boxing',   cat: 'boxing'  },
+    { key: 'office',   label: 'Office',   cat: 'office'  },
+    { key: 'wfh',      label: 'WFH',      cat: 'wfh'     },
+  ];
+  const adjust = (key, delta) =>
+    setDraft(d => ({ ...d, [key]: Math.max(0, Math.min(7, d[key] + delta)) }));
+
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+        <div className="sheet-handle" />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18 }}>
+          <div>
+            <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.15em' }}>
+              WEEKLY TARGETS
+            </div>
+            <h2 className="display-font" style={{ fontSize: 28, fontWeight: 600, margin: '4px 0 0 0' }}>
+              Set the bar
+            </h2>
+          </div>
+          <button onClick={onClose} className="btn-ghost" style={{ padding: 8 }}><X size={18} /></button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {fields.map(f => {
+            const cat = CATEGORY_STYLES[f.cat];
+            const Icon = cat.icon;
+            return (
+              <div key={f.key} style={{
+                display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px',
+                background: 'white', borderRadius: 14, border: '1px solid rgba(0,0,0,0.06)',
+              }}>
+                <div className="task-icon" style={{ background: cat.bg, width: 36, height: 36, borderRadius: 10 }}>
+                  <Icon size={18} color={cat.color} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 600, fontSize: 15 }}>{f.label}</div>
+                  <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.1em', marginTop: 2 }}>
+                    PER WEEK
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <button onClick={() => adjust(f.key, -1)} className="stepper-btn" aria-label="Decrease">
+                    <Minus size={16} />
+                  </button>
+                  <span style={{ fontFamily: "'Fraunces', serif", fontStyle: 'italic', fontWeight: 600, fontSize: 26, minWidth: 28, textAlign: 'center' }}>
+                    {draft[f.key]}
+                  </span>
+                  <button onClick={() => adjust(f.key, +1)} className="stepper-btn" aria-label="Increase">
+                    <Plus size={16} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 22 }}>
+          <button className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" onClick={() => onSave(draft)}>
+            <Check size={16} /> Save goals
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Templates View + Editor
+// ---------------------------------------------------------------------------
+
 function TemplatesView({ templates, setTemplates, editingTemplate, setEditingTemplate, creatingTemplate, setCreatingTemplate, resetData, userId }) {
   const handleDelete = async (id) => {
+    if (!confirm('Delete this template?')) return;
     setTemplates(templates.filter(t => t.id !== id));
     try { await db.deleteTemplate(id); } catch (e) { console.error('Delete failed:', e); }
   };
@@ -836,8 +1532,8 @@ function TemplatesView({ templates, setTemplates, editingTemplate, setEditingTem
   };
 
   return (
-    <main className="main-padding" style={{ padding: '32px', maxWidth: 1400, margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 32, flexWrap: 'wrap', gap: 16 }}>
+    <main className="main-padding" style={{ padding: '24px 32px', maxWidth: 1400, margin: '0 auto' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 24, flexWrap: 'wrap', gap: 16 }}>
         <div>
           <div className="mono" style={{ fontSize: 11, color: '#737373', letterSpacing: '0.15em', marginBottom: 8 }}>
             YOUR LIBRARY
@@ -849,12 +1545,9 @@ function TemplatesView({ templates, setTemplates, editingTemplate, setEditingTem
             Build reusable patterns. Edit once, propagate everywhere.
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn-ghost" onClick={resetData} style={{ fontSize: 12 }}>Reset data</button>
-          <button className="btn-primary" onClick={() => setCreatingTemplate(true)}>
-            <Plus size={16} /> New Template
-          </button>
-        </div>
+        <button className="btn-primary" onClick={() => setCreatingTemplate(true)}>
+          <Plus size={16} /> New Template
+        </button>
       </div>
 
       <div className="templates-grid">
@@ -864,7 +1557,6 @@ function TemplatesView({ templates, setTemplates, editingTemplate, setEditingTem
             border: '1px solid rgba(0,0,0,0.06)', position: 'relative', overflow: 'hidden',
           }}>
             <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 4, background: t.accent }} />
-
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
               <h3 style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-0.02em', margin: 0 }}>{t.name}</h3>
               <div style={{ display: 'flex', gap: 4 }}>
@@ -873,18 +1565,16 @@ function TemplatesView({ templates, setTemplates, editingTemplate, setEditingTem
                 <button className="btn-ghost" style={{ padding: 6, color: '#DC2626' }} onClick={() => handleDelete(t.id)}><Trash2 size={14} /></button>
               </div>
             </div>
-
             <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.15em', marginBottom: 10 }}>
               {t.tasks.length} TASKS
             </div>
-
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {t.tasks.map(task => {
                 const cat = CATEGORY_STYLES[task.category];
                 const Icon = cat.icon;
                 return (
                   <div key={task.id} className="task-row">
-                    <div className="mono" style={{ fontSize: 10, color: '#737373', width: 40 }}>{task.time}</div>
+                    <div className="mono" style={{ fontSize: 10, color: '#737373', minWidth: 56 }}>{formatTime(task.time, task.endTime)}</div>
                     <div className="task-icon" style={{ background: cat.bg, width: 24, height: 24 }}>
                       <Icon size={12} color={cat.color} />
                     </div>
@@ -895,6 +1585,15 @@ function TemplatesView({ templates, setTemplates, editingTemplate, setEditingTem
             </div>
           </div>
         ))}
+      </div>
+
+      <div style={{ marginTop: 32, textAlign: 'center' }}>
+        <button onClick={resetData} style={{
+          fontSize: 12, color: '#A3A3A3', background: 'none', border: 'none',
+          textDecoration: 'underline', cursor: 'pointer',
+        }}>
+          Reset all data
+        </button>
       </div>
 
       {(editingTemplate || creatingTemplate) && (
@@ -909,8 +1608,7 @@ function TemplatesView({ templates, setTemplates, editingTemplate, setEditingTem
                 setTemplates([...templates, saved]);
               }
             } catch (e) { console.error('Save template failed:', e); }
-            setEditingTemplate(null);
-            setCreatingTemplate(false);
+            setEditingTemplate(null); setCreatingTemplate(false);
           }}
           onClose={() => { setEditingTemplate(null); setCreatingTemplate(false); }}
         />
@@ -925,15 +1623,18 @@ function TemplateEditor({ template, onSave, onClose }) {
   const [tasks, setTasks] = useState(template?.tasks || []);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskTime, setNewTaskTime] = useState('09:00');
+  const [newTaskEndTime, setNewTaskEndTime] = useState('');
   const [newTaskCat, setNewTaskCat] = useState('workout');
 
   const ACCENT_OPTIONS = ['#FF4D2E', '#E11D48', '#0F172A', '#0891B2', '#A16207', '#7C3AED'];
 
   const addTask = () => {
     if (!newTaskTitle.trim()) return;
-    setTasks([...tasks, { id: `task${Date.now()}`, title: newTaskTitle, time: newTaskTime, category: newTaskCat }]
-      .sort((a, b) => a.time.localeCompare(b.time)));
-    setNewTaskTitle('');
+    setTasks([...tasks, {
+      id: `task${Date.now()}`, title: newTaskTitle, time: newTaskTime,
+      endTime: newTaskEndTime || null, category: newTaskCat,
+    }].sort((a, b) => a.time.localeCompare(b.time)));
+    setNewTaskTitle(''); setNewTaskEndTime('');
   };
   const removeTask = (id) => setTasks(tasks.filter(t => t.id !== id));
   const save = () => {
@@ -942,8 +1643,9 @@ function TemplateEditor({ template, onSave, onClose }) {
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 580 }}>
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 580 }}>
+        <div className="sheet-handle" />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
           <div>
             <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.15em' }}>
@@ -969,16 +1671,11 @@ function TemplateEditor({ template, onSave, onClose }) {
           </label>
           <div style={{ display: 'flex', gap: 8 }}>
             {ACCENT_OPTIONS.map(c => (
-              <button
-                key={c}
-                onClick={() => setAccent(c)}
-                style={{
-                  width: 32, height: 32, borderRadius: '50%', background: c,
-                  border: accent === c ? '3px solid white' : '3px solid transparent',
-                  outline: accent === c ? `2px solid ${c}` : 'none',
-                  transition: 'transform 0.1s ease',
-                }}
-              />
+              <button key={c} onClick={() => setAccent(c)} style={{
+                width: 32, height: 32, borderRadius: '50%', background: c,
+                border: accent === c ? '3px solid white' : '3px solid transparent',
+                outline: accent === c ? `2px solid ${c}` : 'none',
+              }} />
             ))}
           </div>
         </div>
@@ -997,7 +1694,7 @@ function TemplateEditor({ template, onSave, onClose }) {
                   background: 'white', borderRadius: 10, border: '1px solid rgba(0,0,0,0.06)',
                 }}>
                   <GripVertical size={14} color="#A3A3A3" />
-                  <span className="mono" style={{ fontSize: 11, color: '#737373', width: 36 }}>{task.time}</span>
+                  <span className="mono" style={{ fontSize: 11, color: '#737373', minWidth: 56 }}>{formatTime(task.time, task.endTime)}</span>
                   <div className="task-icon" style={{ background: cat.bg, width: 24, height: 24 }}>
                     <Icon size={12} color={cat.color} />
                   </div>
@@ -1013,34 +1710,30 @@ function TemplateEditor({ template, onSave, onClose }) {
               {Object.entries(CATEGORY_STYLES).map(([key, cat]) => {
                 const Icon = cat.icon;
                 return (
-                  <button
-                    key={key}
-                    onClick={() => setNewTaskCat(key)}
-                    style={{
-                      padding: '5px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600,
-                      display: 'inline-flex', alignItems: 'center', gap: 4,
-                      background: newTaskCat === key ? cat.color : cat.bg,
-                      color: newTaskCat === key ? 'white' : cat.color,
-                      transition: 'all 0.15s ease',
-                    }}
-                  >
+                  <button key={key} onClick={() => setNewTaskCat(key)} style={{
+                    padding: '6px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    background: newTaskCat === key ? cat.color : cat.bg,
+                    color: newTaskCat === key ? 'white' : cat.color,
+                  }}>
                     <Icon size={11} />
                     {cat.label}
                   </button>
                 );
               })}
             </div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <input
-                className="input" value={newTaskTitle}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <input className="input" value={newTaskTitle}
                 onChange={(e) => setNewTaskTitle(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && addTask()}
-                placeholder="Task title..." style={{ flex: 1 }}
-              />
-              <input
-                className="input" type="time" value={newTaskTime}
-                onChange={(e) => setNewTaskTime(e.target.value)} style={{ width: 110 }}
-              />
+                placeholder="Task title..." style={{ flex: 1, minWidth: 140 }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <input className="input" type="time" value={newTaskTime}
+                  onChange={(e) => setNewTaskTime(e.target.value)} style={{ width: 110 }} />
+                <span style={{ fontSize: 12, color: '#737373' }}>–</span>
+                <input className="input" type="time" value={newTaskEndTime}
+                  onChange={(e) => setNewTaskEndTime(e.target.value)} style={{ width: 110 }} />
+              </div>
               <button className="btn-primary" onClick={addTask} style={{ padding: '10px 14px' }}><Plus size={16} /></button>
             </div>
           </div>
@@ -1052,5 +1745,131 @@ function TemplateEditor({ template, onSave, onClose }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Global styles (single style block for the app)
+// ---------------------------------------------------------------------------
+
+function GlobalStyles() {
+  return (
+    <style>{`
+      @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,800&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+      * { box-sizing: border-box; }
+      .display-font { font-family: 'Fraunces', serif; font-style: italic; letter-spacing: -0.02em; }
+      .mono { font-family: 'JetBrains Mono', monospace; }
+      button { cursor: pointer; border: none; background: none; font-family: inherit; color: inherit; touch-action: manipulation; }
+      button:active { transform: scale(0.97); }
+      .btn-primary { background: #0A0A0A; color: #FAFAF7; padding: 12px 18px; border-radius: 999px; font-weight: 500; font-size: 14px; transition: transform 0.15s ease, background 0.15s ease; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
+      .btn-primary:hover { background: #FF4D2E; transform: translateY(-1px); }
+      .btn-ghost { padding: 10px 14px; border-radius: 999px; font-weight: 500; font-size: 13px; color: #525252; transition: background 0.15s ease; min-height: 36px; }
+      .btn-ghost:hover { background: rgba(0,0,0,0.06); }
+      .pill-tab { padding: 10px 18px; border-radius: 999px; font-size: 13px; font-weight: 600; transition: all 0.2s ease; min-height: 36px; }
+      .pill-tab.active { background: #0A0A0A; color: #FAFAF7; }
+      .pill-tab:not(.active):hover { background: rgba(0,0,0,0.06); }
+
+      .day-card { background: white; border-radius: 20px; padding: 18px; border: 1px solid rgba(0,0,0,0.06); transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease; cursor: pointer; position: relative; overflow: hidden; }
+      .day-card:hover { transform: translateY(-2px); box-shadow: 0 12px 30px -10px rgba(0,0,0,0.12); border-color: rgba(0,0,0,0.12); }
+      .day-card.empty { background: #F4F3EE; border-style: dashed; border-color: rgba(0,0,0,0.12); }
+      .day-card.today::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: #FF4D2E; }
+
+      .template-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; background: white; border: 1.5px solid; }
+      .task-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; transition: background 0.12s ease; }
+      .task-row:hover { background: rgba(0,0,0,0.03); }
+      .task-icon { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; flex-shrink: 0; }
+
+      .checkbox { width: 28px; height: 28px; min-width: 28px; border-radius: 8px; border: 1.5px solid rgba(0,0,0,0.2); background: white; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all 0.15s ease; cursor: pointer; }
+      .checkbox:hover { border-color: #0A0A0A; }
+      .checkbox.checked-accent { background: #FF4D2E; border-color: #FF4D2E; }
+      .task-completed { opacity: 0.45; }
+      .task-completed .task-title { text-decoration: line-through; text-decoration-thickness: 1.5px; }
+      .one-time-badge { font-size: 8px; font-weight: 700; letter-spacing: 0.05em; padding: 2px 6px; border-radius: 3px; background: rgba(0,0,0,0.06); color: #525252; font-family: 'JetBrains Mono', monospace; }
+
+      .sheet-backdrop { position: fixed; inset: 0; background: rgba(10,10,10,0.4); backdrop-filter: blur(8px); display: grid; place-items: center; padding: 0; z-index: 100; animation: fadeIn 0.2s ease; }
+      .sheet { background: #FAFAF7; border-radius: 24px; max-width: 560px; width: 100%; max-height: 88vh; overflow-y: auto; padding: 28px; animation: slideUp 0.25s cubic-bezier(0.32, 0.72, 0, 1); box-shadow: 0 30px 60px -20px rgba(0,0,0,0.3); position: relative; }
+      .sheet-handle { display: none; width: 36px; height: 4px; border-radius: 999px; background: rgba(0,0,0,0.18); margin: -12px auto 14px; }
+
+      @media (max-width: 700px) {
+        .sheet-backdrop { padding: 0; align-items: end; }
+        .sheet { max-width: 100%; max-height: 92vh; border-radius: 24px 24px 0 0; padding: 22px 18px calc(22px + env(safe-area-inset-bottom)); }
+        .sheet-handle { display: block; }
+      }
+
+      @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+      @keyframes checkPop { 0% { transform: scale(1); } 50% { transform: scale(1.2); } 100% { transform: scale(1); } }
+      .check-pop { animation: checkPop 0.3s ease; }
+
+      .input { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1.5px solid rgba(0,0,0,0.1); background: white; font-family: inherit; font-size: 16px; transition: border-color 0.15s ease; min-height: 44px; }
+      .input:focus { outline: none; border-color: #0A0A0A; }
+
+      .week-grid { display: grid; gap: 14px; grid-template-columns: repeat(7, 1fr); }
+      @media (max-width: 1100px) { .week-grid { grid-template-columns: repeat(3, 1fr); } }
+      @media (max-width: 700px) {
+        .week-grid {
+          display: flex; gap: 12px; overflow-x: auto;
+          scroll-snap-type: x mandatory; padding: 4px 16px 4px 4px;
+          margin: 0 -16px;  scrollbar-width: none;
+        }
+        .week-grid::-webkit-scrollbar { display: none; }
+        .day-card {
+          flex: 0 0 78%; scroll-snap-align: start;
+        }
+      }
+
+      .templates-grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+      .goals-grid { grid-template-columns: 1fr; }
+      @media (min-width: 700px) { .goals-grid { grid-template-columns: repeat(2, 1fr); } }
+
+      .stat-num { font-family: 'Fraunces', serif; font-weight: 600; font-size: 28px; line-height: 1; font-style: italic; }
+      .progress-bar { height: 5px; background: rgba(0,0,0,0.08); border-radius: 999px; overflow: hidden; }
+      .progress-fill { height: 100%; background: #FF4D2E; border-radius: 999px; transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+      .section-divider { display: flex; align-items: center; gap: 10px; margin: 12px 0 6px; }
+      .section-divider::before, .section-divider::after { content: ''; flex: 1; height: 1px; background: rgba(0,0,0,0.06); }
+      .section-divider-label { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: #737373; letter-spacing: 0.15em; font-weight: 600; }
+
+      .stepper-btn {
+        width: 36px; height: 36px; border-radius: 50%;
+        background: rgba(0,0,0,0.05); display: grid; place-items: center;
+        transition: background 0.15s ease;
+      }
+      .stepper-btn:hover { background: rgba(0,0,0,0.1); }
+
+      .desktop-nav { display: flex; }
+      .mobile-nav {
+        display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 50;
+        background: rgba(250,250,247,0.92); backdrop-filter: blur(16px);
+        border-top: 1px solid rgba(0,0,0,0.06);
+        padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+        justify-content: space-around; align-items: center; gap: 4px;
+      }
+      .mobile-nav-tab {
+        flex: 1; max-width: 90px; min-height: 56px; padding: 8px; border-radius: 14px;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+        color: #737373; transition: all 0.2s ease;
+      }
+      .mobile-nav-tab.active { color: #FF4D2E; background: rgba(255, 77, 46, 0.08); }
+      .mobile-nav-tab.fab {
+        background: linear-gradient(135deg, #FF4D2E 0%, #E11D48 100%);
+        color: white; border-radius: 50%;
+        width: 60px; height: 60px; padding: 0; flex: 0 0 60px;
+        margin-top: -22px; box-shadow: 0 10px 22px -4px rgba(225,29,72,0.45);
+        transition: transform 0.15s ease;
+        flex-direction: row; align-items: center; justify-content: center;
+      }
+      .mobile-nav-tab.fab:hover { transform: scale(1.05); }
+      .mobile-nav-tab.fab.active { background: linear-gradient(135deg, #FF4D2E 0%, #E11D48 100%); color: white; }
+      .mobile-nav-label { font-size: 10px; font-weight: 600; letter-spacing: 0.02em; }
+
+      @media (max-width: 700px) {
+        .desktop-nav { display: none; }
+        .mobile-nav { display: flex; }
+        .header-padding { padding: 16px 20px !important; }
+        .main-padding { padding: 20px 16px !important; }
+        .hero-title { font-size: clamp(32px, 9vw, 44px) !important; }
+        .stats-strip { grid-template-columns: repeat(2, 1fr) !important; }
+      }
+    `}</style>
   );
 }
