@@ -2,19 +2,20 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus, X, Edit2, Copy, Trash2, Dumbbell, Home, Building2, Zap, Coffee, Sparkles,
   GripVertical, Check, Calendar, Flame, LayoutGrid, Library, LogOut, BarChart3,
-  Minus, Settings, TrendingUp, Scale, Target,
+  Minus, Settings, TrendingUp, Scale, Target, Hand,
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import * as db from './supabaseData';
 import { dateKey, getWeekStart, addDays } from './supabaseData';
 
 const CATEGORY_STYLES = {
-  workout: { icon: Dumbbell, label: 'Workout', color: '#FF4D2E', bg: 'rgba(255, 77, 46, 0.08)' },
-  boxing:  { icon: Zap,      label: 'Boxing',   color: '#E11D48', bg: 'rgba(225, 29, 72, 0.08)' },
-  office:  { icon: Building2,label: 'Office',   color: '#0F172A', bg: 'rgba(15, 23, 42, 0.06)' },
-  wfh:     { icon: Home,     label: 'WFH',      color: '#0891B2', bg: 'rgba(8, 145, 178, 0.08)' },
-  break:   { icon: Coffee,   label: 'Personal', color: '#A16207', bg: 'rgba(161, 98, 7, 0.08)' },
-  custom:  { icon: Sparkles, label: 'Custom',   color: '#7C3AED', bg: 'rgba(124, 58, 237, 0.08)' },
+  workout:  { icon: Dumbbell, label: 'Workout',   color: '#FF4D2E', bg: 'rgba(255, 77, 46, 0.08)' },
+  boxing:   { icon: Zap,      label: 'Boxing',    color: '#E11D48', bg: 'rgba(225, 29, 72, 0.08)' },
+  jiujitsu: { icon: Hand,     label: 'Jiu-Jitsu', color: '#1E40AF', bg: 'rgba(30, 64, 175, 0.08)' },
+  office:   { icon: Building2,label: 'Office',    color: '#0F172A', bg: 'rgba(15, 23, 42, 0.06)' },
+  wfh:      { icon: Home,     label: 'WFH',       color: '#0891B2', bg: 'rgba(8, 145, 178, 0.08)' },
+  break:    { icon: Coffee,   label: 'Personal',  color: '#A16207', bg: 'rgba(161, 98, 7, 0.08)' },
+  custom:   { icon: Sparkles, label: 'Custom',    color: '#7C3AED', bg: 'rgba(124, 58, 237, 0.08)' },
 };
 
 const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -868,8 +869,8 @@ function StatsView({
   // Walk every day in window
   let totalTasks = 0, completedTasks = 0;
   let activeDays = 0;
-  const totals = { workout: 0, boxing: 0, office: 0, wfh: 0, break: 0, custom: 0 };
-  const completedByCat = { workout: 0, boxing: 0, office: 0, wfh: 0, break: 0, custom: 0 };
+  const totals = { workout: 0, boxing: 0, jiujitsu: 0, office: 0, wfh: 0, break: 0, custom: 0 };
+  const completedByCat = { workout: 0, boxing: 0, jiujitsu: 0, office: 0, wfh: 0, break: 0, custom: 0 };
 
   for (let d = new Date(startDate); d <= endDate; d = addDays(d, 1)) {
     const dKey = dateKey(d);
