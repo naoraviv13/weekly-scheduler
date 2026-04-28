@@ -170,18 +170,23 @@ export default function ScheduleApp({ session }) {
 
   // ---- Weight handlers ----
   const handleSaveWeight = async (entryDate, weightKg) => {
+    // Optimistic update first so UI never lands in an inconsistent state
+    setWeightEntries(prev => {
+      const filtered = prev.filter(w => w.date !== entryDate);
+      return [...filtered, { date: entryDate, weight: weightKg }]
+        .sort((a, b) => a.date.localeCompare(b.date));
+    });
     try {
       await db.upsertWeightEntry(userId, entryDate, weightKg);
-      const filtered = weightEntries.filter(w => w.date !== entryDate);
-      setWeightEntries([...filtered, { date: entryDate, weight: weightKg }]
-        .sort((a, b) => a.date.localeCompare(b.date)));
-    } catch (e) { console.error('Save weight failed:', e); }
+    } catch (e) {
+      console.error('Save weight failed:', e);
+      alert('Could not save weight. Please try again.');
+    }
   };
   const handleDeleteWeight = async (entryDate) => {
-    try {
-      await db.deleteWeightEntry(userId, entryDate);
-      setWeightEntries(weightEntries.filter(w => w.date !== entryDate));
-    } catch (e) { console.error('Delete weight failed:', e); }
+    setWeightEntries(prev => prev.filter(w => w.date !== entryDate));
+    try { await db.deleteWeightEntry(userId, entryDate); }
+    catch (e) { console.error('Delete weight failed:', e); }
   };
 
   const resetData = async () => {
@@ -1316,7 +1321,7 @@ function WeightTracker({ weightEntries, todayKey, onSave, onDelete, windowMode, 
                 <button className="btn-ghost" onClick={() => { setEditing(false); setDraft(String(todayEntry.weight)); }}>Cancel</button>
               )}
             </div>
-          ) : (
+          ) : todayEntry ? (
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
               <span className="display-font" style={{ fontSize: 40, fontWeight: 600, fontStyle: 'italic', color: '#7C3AED', lineHeight: 1 }}>
                 {todayEntry.weight.toFixed(1)}
@@ -1329,6 +1334,10 @@ function WeightTracker({ weightEntries, todayKey, onSave, onDelete, windowMode, 
                 <Trash2 size={14} />
               </button>
             </div>
+          ) : (
+            <button className="btn-primary" onClick={() => setEditing(true)} style={{ padding: '10px 14px' }}>
+              <Plus size={15} /> Log weight
+            </button>
           )}
         </div>
         {delta !== null && (
