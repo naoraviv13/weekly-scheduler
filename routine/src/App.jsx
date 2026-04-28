@@ -1843,16 +1843,28 @@ function TemplatesView({ templates, setTemplates, editingTemplate, setEditingTem
       {(editingTemplate || creatingTemplate) && (
         <TemplateEditor
           template={editingTemplate}
-          onSave={async (updated) => {
-            try {
-              const saved = await db.upsertTemplate(updated, userId);
-              if (editingTemplate) {
-                setTemplates(templates.map(t => t.id === saved.id ? saved : t));
-              } else {
-                setTemplates([...templates, saved]);
-              }
-            } catch (e) { console.error('Save template failed:', e); }
+          onSave={(updated) => {
+            const wasEditing = !!editingTemplate;
+            // Close immediately for snappy UX
             setEditingTemplate(null); setCreatingTemplate(false);
+            // Optimistic local update
+            const tempId = updated.id || `t${Date.now()}`;
+            const optimistic = { ...updated, id: tempId };
+            if (wasEditing) {
+              setTemplates(prev => prev.map(t => t.id === updated.id ? optimistic : t));
+            } else {
+              setTemplates(prev => [...prev, optimistic]);
+            }
+            // Persist in background, then reconcile with server response
+            db.upsertTemplate(updated, userId).then(saved => {
+              setTemplates(prev => {
+                const idx = prev.findIndex(t => t.id === (wasEditing ? updated.id : tempId));
+                if (idx === -1) return [...prev, saved];
+                const copy = prev.slice();
+                copy[idx] = saved;
+                return copy;
+              });
+            }).catch(e => console.error('Save template failed:', e));
           }}
           onClose={() => { setEditingTemplate(null); setCreatingTemplate(false); }}
         />
