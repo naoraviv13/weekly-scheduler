@@ -97,6 +97,10 @@ export default function ScheduleApp({ session }) {
   const [creatingTemplate, setCreatingTemplate] = useState(false);
   const [editingGoals, setEditingGoals] = useState(false);
 
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }, [view]);
+
   const { dates: weekDates, todayIdx, today } = getWeekDates();
   const todayKey = dateKey(today);
 
