@@ -2,21 +2,25 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus, X, Edit2, Copy, Trash2, Dumbbell, Home, Building2, Zap, Coffee, Sparkles,
   GripVertical, Check, Calendar, Flame, LayoutGrid, Library, LogOut, BarChart3,
-  Minus, Settings, TrendingUp, Scale, Target, Hand,
+  Minus, Settings, TrendingUp, Scale, Target, Hand, Goal,
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import * as db from './supabaseData';
 import { dateKey, getWeekStart, addDays } from './supabaseData';
 
 const CATEGORY_STYLES = {
-  workout:  { icon: Dumbbell, label: 'Workout',   color: '#FF4D2E', bg: 'rgba(255, 77, 46, 0.08)' },
-  boxing:   { icon: Zap,      label: 'Boxing',    color: '#E11D48', bg: 'rgba(225, 29, 72, 0.08)' },
-  jiujitsu: { icon: Hand,     label: 'Jiu-Jitsu', color: '#1E40AF', bg: 'rgba(30, 64, 175, 0.08)' },
-  office:   { icon: Building2,label: 'Office',    color: '#0F172A', bg: 'rgba(15, 23, 42, 0.06)' },
-  wfh:      { icon: Home,     label: 'WFH',       color: '#0891B2', bg: 'rgba(8, 145, 178, 0.08)' },
-  break:    { icon: Coffee,   label: 'Personal',  color: '#A16207', bg: 'rgba(161, 98, 7, 0.08)' },
-  custom:   { icon: Sparkles, label: 'Custom',    color: '#7C3AED', bg: 'rgba(124, 58, 237, 0.08)' },
+  workout:  { icon: Dumbbell, label: 'Gym',        color: '#FF4D2E', bg: 'rgba(255, 77, 46, 0.08)' },
+  boxing:   { icon: Zap,      label: 'Boxing',     color: '#E11D48', bg: 'rgba(225, 29, 72, 0.08)' },
+  jiujitsu: { icon: Hand,     label: 'Jiu-Jitsu',  color: '#1E40AF', bg: 'rgba(30, 64, 175, 0.08)' },
+  football: { icon: Goal,     label: 'Football',   color: '#16A34A', bg: 'rgba(22, 163, 74, 0.08)' },
+  office:   { icon: Building2,label: 'Office',     color: '#0F172A', bg: 'rgba(15, 23, 42, 0.06)' },
+  wfh:      { icon: Home,     label: 'WFH',        color: '#0891B2', bg: 'rgba(8, 145, 178, 0.08)' },
+  break:    { icon: Coffee,   label: 'Personal',   color: '#A16207', bg: 'rgba(161, 98, 7, 0.08)' },
+  custom:   { icon: Sparkles, label: 'Custom',     color: '#7C3AED', bg: 'rgba(124, 58, 237, 0.08)' },
 };
+
+// Categories that aggregate into the "Workouts" counter
+const WORKOUT_CATEGORIES = ['workout', 'boxing', 'jiujitsu', 'football'];
 
 const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const DAY_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -155,6 +159,29 @@ export default function ScheduleApp({ session }) {
       const next = new Set(completed); next.delete(ck); setCompleted(next);
     }
     try { await db.removeOneTimeTask(taskId); } catch (e) { console.error('Remove failed:', e); }
+  };
+
+  const updateOneTimeTask = async (dKey, taskId, patch) => {
+    const existing = oneTimeTasks[dKey] || [];
+    const optimistic = existing
+      .map(t => t.id === taskId ? { ...t, ...patch } : t)
+      .sort((a, b) => a.time.localeCompare(b.time));
+    setOneTimeTasks({ ...oneTimeTasks, [dKey]: optimistic });
+    try { await db.updateOneTimeTask(taskId, patch); }
+    catch (e) { console.error('Update one-time failed:', e); }
+  };
+
+  const updateTemplateTask = async (templateId, taskId, patch) => {
+    const tpl = getTemplate(templateId);
+    if (!tpl) return;
+    const updatedTasks = tpl.tasks
+      .map(t => t.id === taskId ? { ...t, ...patch } : t)
+      .sort((a, b) => a.time.localeCompare(b.time));
+    // Optimistic
+    setTemplates(templates.map(t => t.id === templateId ? { ...t, tasks: updatedTasks } : t));
+    try {
+      await db.upsertTemplate({ id: templateId, name: tpl.name, accent: tpl.accent, tasks: updatedTasks }, userId);
+    } catch (e) { console.error('Update template task failed:', e); }
   };
 
   const handleSetWeekAssignments = async (newAssignments) => {
@@ -309,6 +336,7 @@ export default function ScheduleApp({ session }) {
           toggleComplete={toggleComplete} getTemplate={getTemplate}
           showDayDetail={showDayDetail} setShowDayDetail={setShowDayDetail}
           addOneTimeTask={addOneTimeTask} removeOneTimeTask={removeOneTimeTask}
+          updateOneTimeTask={updateOneTimeTask} updateTemplateTask={updateTemplateTask}
           weekDates={weekDates} todayIdx={todayIdx} todayKey={todayKey}
           hero={hero}
         />
@@ -389,7 +417,8 @@ export default function ScheduleApp({ session }) {
 function WeekView({
   templates, weekAssignments, setWeekAssignments, oneTimeTasks, completed,
   toggleComplete, getTemplate, showDayDetail, setShowDayDetail,
-  addOneTimeTask, removeOneTimeTask, weekDates, todayIdx, todayKey, hero,
+  addOneTimeTask, removeOneTimeTask, updateOneTimeTask, updateTemplateTask,
+  weekDates, todayIdx, todayKey, hero,
 }) {
   const carouselRef = useRef(null);
   const dayRefs = useRef([]);
@@ -408,8 +437,8 @@ function WeekView({
     return [...tpl, ...oo].sort((a, b) => a.time.localeCompare(b.time));
   };
 
-  // Week-level stats
-  const stats = { workouts: 0, boxing: 0, office: 0, wfh: 0 };
+  // Week-level stats — count per category, then derive aggregates
+  const catCounts = { workout: 0, boxing: 0, jiujitsu: 0, football: 0, office: 0, wfh: 0, break: 0, custom: 0 };
   let totalTasks = 0, completedTasks = 0;
   weekDates.forEach((d, idx) => {
     const dKey = dateKey(d);
@@ -418,9 +447,10 @@ function WeekView({
       totalTasks++;
       const k = completionKey(dKey, task.id, task.isOneTime);
       if (completed.has(k)) completedTasks++;
-      if (stats[task.category] !== undefined) stats[task.category]++;
+      if (catCounts[task.category] !== undefined) catCounts[task.category]++;
     });
   });
+  const workoutsAgg = WORKOUT_CATEGORIES.reduce((s, c) => s + (catCounts[c] || 0), 0);
   const completionPct = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
   // Streak: consecutive days from today backward where day.done === day.total (skip empty days)
@@ -439,6 +469,36 @@ function WeekView({
   const weekNum = Math.ceil(((weekDates[0] - new Date(weekDates[0].getFullYear(), 0, 1)) / 86400000
                   + new Date(weekDates[0].getFullYear(), 0, 1).getDay() + 1) / 7);
 
+  // Configurable week-progress tiles
+  const TILE_DEFS = {
+    workouts:  { label: 'Workouts',   color: '#FF4D2E', value: workoutsAgg },
+    gym:       { label: 'Gym',        color: '#FF4D2E', value: catCounts.workout },
+    boxing:    { label: 'Boxing',     color: '#E11D48', value: catCounts.boxing },
+    jiujitsu:  { label: 'Jiu-Jitsu',  color: '#1E40AF', value: catCounts.jiujitsu },
+    football:  { label: 'Football',   color: '#16A34A', value: catCounts.football },
+    work_days: { label: 'Work days',  color: '#0F172A', value: catCounts.office + catCounts.wfh },
+    office:    { label: 'Office',     color: '#0F172A', value: catCounts.office },
+    wfh:       { label: 'WFH',        color: '#0891B2', value: catCounts.wfh },
+    personal:  { label: 'Personal',   color: '#A16207', value: catCounts.break },
+  };
+  const DEFAULT_TILES = ['workouts', 'boxing', 'work_days'];
+  const [tileKeys, setTileKeys] = useState(() => {
+    try {
+      const raw = localStorage.getItem('routine:weekTiles:v1');
+      const parsed = raw ? JSON.parse(raw) : null;
+      return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_TILES;
+    } catch { return DEFAULT_TILES; }
+  });
+  const [showTilePicker, setShowTilePicker] = useState(false);
+  const updateTiles = (next) => {
+    setTileKeys(next);
+    try { localStorage.setItem('routine:weekTiles:v1', JSON.stringify(next)); } catch {}
+  };
+  const toggleTile = (key) => {
+    const next = tileKeys.includes(key) ? tileKeys.filter(k => k !== key) : [...tileKeys, key];
+    updateTiles(next);
+  };
+
   return (
     <main className="main-padding" style={{ padding: '24px 32px', maxWidth: 1400, margin: '0 auto' }}>
       <div style={{ marginBottom: 24 }}>
@@ -455,7 +515,7 @@ function WeekView({
       <div className="stats-strip" style={{
         display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 0,
         marginBottom: 24, background: 'white', borderRadius: 16,
-        border: '1px solid rgba(0,0,0,0.06)', overflow: 'hidden',
+        border: '1px solid rgba(0,0,0,0.06)', overflow: 'hidden', position: 'relative',
       }}>
         <div style={{ padding: 18, borderRight: '1px solid rgba(0,0,0,0.06)' }}>
           <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.1em', marginBottom: 8 }}>
@@ -474,9 +534,44 @@ function WeekView({
             <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.1em', marginTop: 4 }}>DAY STREAK</div>
           </div>
         </div>
-        <StatBox num={stats.workouts} label="Workouts" color="#FF4D2E" border />
-        <StatBox num={stats.boxing} label="Boxing" color="#E11D48" border />
-        <StatBox num={stats.office + stats.wfh} label="Work days" color="#0F172A" />
+        {tileKeys.map((k, i) => {
+          const t = TILE_DEFS[k];
+          if (!t) return null;
+          const isLast = i === tileKeys.length - 1;
+          return <StatBox key={k} num={t.value} label={t.label} color={t.color} border={!isLast} />;
+        })}
+        <button
+          className="btn-ghost" onClick={() => setShowTilePicker(v => !v)}
+          aria-label="Customize week progress tiles"
+          style={{
+            position: 'absolute', top: 8, right: 8, padding: 6,
+            color: '#A3A3A3', borderRadius: 999,
+          }}
+        >
+          <Settings size={14} />
+        </button>
+        {showTilePicker && (
+          <div className="tile-picker">
+            <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.15em', marginBottom: 10, fontWeight: 600 }}>
+              SHOW IN WEEK PROGRESS
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {Object.entries(TILE_DEFS).map(([key, def]) => {
+                const checked = tileKeys.includes(key);
+                return (
+                  <label key={key} className="tile-picker-row">
+                    <input type="checkbox" checked={checked} onChange={() => toggleTile(key)} />
+                    <span className="tile-picker-dot" style={{ background: def.color }} />
+                    <span style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{def.label}</span>
+                    <span className="mono" style={{ fontSize: 10, color: '#737373' }}>{def.value}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <button className="btn-ghost" style={{ fontSize: 11, padding: '6px 10px', marginTop: 10 }}
+                    onClick={() => updateTiles(DEFAULT_TILES)}>Reset to default</button>
+          </div>
+        )}
       </div>
 
       <div className="week-grid" ref={carouselRef}>
@@ -604,6 +699,7 @@ function WeekView({
             tasks={getDayTasks(dKey, dow)}
             completed={completed} toggleComplete={toggleComplete} getTemplate={getTemplate}
             addOneTimeTask={addOneTimeTask} removeOneTimeTask={removeOneTimeTask}
+            updateOneTimeTask={updateOneTimeTask} updateTemplateTask={updateTemplateTask}
             onClose={() => setShowDayDetail(null)}
           />
         );
@@ -629,7 +725,8 @@ function StatBox({ num, label, color, border }) {
 
 function DayDetailSheet({
   dateKey: dKey, dow, dateNum, isToday, templates, weekAssignments, setWeekAssignments,
-  tasks, completed, toggleComplete, getTemplate, addOneTimeTask, removeOneTimeTask, onClose,
+  tasks, completed, toggleComplete, getTemplate, addOneTimeTask, removeOneTimeTask,
+  updateOneTimeTask, updateTemplateTask, onClose,
 }) {
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [showAddOneTime, setShowAddOneTime] = useState(false);
@@ -731,7 +828,10 @@ function DayDetailSheet({
               {templateTasks.map(task => (
                 <TaskCheckRow key={task.id} task={task}
                   isComplete={completed.has(completionKey(dKey, task.id, false))}
-                  onToggle={() => toggleComplete(dKey, task.id, false)} />
+                  onToggle={() => toggleComplete(dKey, task.id, false)}
+                  onSaveEdit={(patch) => updateTemplateTask(tid, task.id, patch)}
+                  editHint={template ? `Edits the "${template.name}" template (applies to every day using it)` : null}
+                />
               ))}
             </div>
           </div>
@@ -749,7 +849,9 @@ function DayDetailSheet({
                 <TaskCheckRow key={task.id} task={task}
                   isComplete={completed.has(completionKey(dKey, task.id, true))}
                   onToggle={() => toggleComplete(dKey, task.id, true)}
-                  onRemove={() => removeOneTimeTask(dKey, task.id)} />
+                  onRemove={() => removeOneTimeTask(dKey, task.id)}
+                  onSaveEdit={(patch) => updateOneTimeTask(dKey, task.id, patch)}
+                />
               ))}
             </div>
           )}
@@ -783,10 +885,12 @@ function DayDetailSheet({
   );
 }
 
-function TaskCheckRow({ task, isComplete, onToggle, onRemove }) {
+function TaskCheckRow({ task, isComplete, onToggle, onRemove, onSaveEdit, editHint }) {
   const cat = CATEGORY_STYLES[task.category];
   const Icon = cat.icon;
   const [justChecked, setJustChecked] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState({ title: task.title, time: task.time, endTime: task.endTime || '', category: task.category });
 
   const handleToggle = () => {
     if (!isComplete) {
@@ -795,6 +899,66 @@ function TaskCheckRow({ task, isComplete, onToggle, onRemove }) {
     }
     onToggle();
   };
+
+  const beginEdit = () => {
+    setDraft({ title: task.title, time: task.time, endTime: task.endTime || '', category: task.category });
+    setEditing(true);
+  };
+
+  const saveEdit = () => {
+    if (!draft.title.trim()) return;
+    onSaveEdit({
+      title: draft.title.trim(), time: draft.time,
+      endTime: draft.endTime || null, category: draft.category,
+    });
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div style={{ padding: 12, background: 'rgba(0,0,0,0.03)', borderRadius: 14 }}>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+          {Object.entries(CATEGORY_STYLES).map(([key, c]) => {
+            const I = c.icon;
+            return (
+              <button key={key} onClick={() => setDraft({ ...draft, category: key })} style={{
+                padding: '6px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                background: draft.category === key ? c.color : c.bg,
+                color: draft.category === key ? 'white' : c.color,
+              }}>
+                <I size={11} /> {c.label}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+          <input className="input" autoFocus value={draft.title}
+            onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+            onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(); if (e.key === 'Escape') setEditing(false); }}
+            placeholder="Title" style={{ flex: 1, minWidth: 140 }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <input className="input" type="time" value={draft.time}
+              onChange={(e) => setDraft({ ...draft, time: e.target.value })} style={{ width: 110 }} />
+            <span style={{ fontSize: 12, color: '#737373' }}>–</span>
+            <input className="input" type="time" value={draft.endTime}
+              onChange={(e) => setDraft({ ...draft, endTime: e.target.value })} style={{ width: 110 }} />
+          </div>
+        </div>
+        {editHint && (
+          <div className="mono" style={{ fontSize: 10, color: '#A16207', marginBottom: 8, lineHeight: 1.4 }}>
+            ⚠ {editHint}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+          <button onClick={() => setEditing(false)} className="btn-ghost" style={{ fontSize: 13 }}>Cancel</button>
+          <button onClick={saveEdit} className="btn-primary" style={{ fontSize: 13, padding: '10px 16px' }}>
+            <Check size={14} /> Save
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`task-row ${isComplete ? 'task-completed' : ''}`} style={{ padding: '10px 12px' }}>
@@ -815,6 +979,11 @@ function TaskCheckRow({ task, isComplete, onToggle, onRemove }) {
           {task.isOneTime && <span className="one-time-badge">1×</span>}
         </div>
       </div>
+      {onSaveEdit && (
+        <button onClick={beginEdit} className="btn-ghost" style={{ padding: 6, color: '#737373' }} aria-label="Edit task">
+          <Edit2 size={14} />
+        </button>
+      )}
       {onRemove && (
         <button onClick={onRemove} className="btn-ghost" style={{ padding: 6, color: '#A3A3A3' }}>
           <X size={14} />
@@ -909,9 +1078,9 @@ function StatsView({
   let totalTasks = 0, completedTasks = 0;
   let activeDays = 0;
   let totalMinutes = 0;
-  const totals = { workout: 0, boxing: 0, jiujitsu: 0, office: 0, wfh: 0, break: 0, custom: 0 };
-  const completedByCat = { workout: 0, boxing: 0, jiujitsu: 0, office: 0, wfh: 0, break: 0, custom: 0 };
-  const minutesByCat = { workout: 0, boxing: 0, jiujitsu: 0, office: 0, wfh: 0, break: 0, custom: 0 };
+  const totals = { workout: 0, boxing: 0, jiujitsu: 0, football: 0, office: 0, wfh: 0, break: 0, custom: 0 };
+  const completedByCat = { workout: 0, boxing: 0, jiujitsu: 0, football: 0, office: 0, wfh: 0, break: 0, custom: 0 };
+  const minutesByCat = { workout: 0, boxing: 0, jiujitsu: 0, football: 0, office: 0, wfh: 0, break: 0, custom: 0 };
 
   for (let d = new Date(startDate); d <= endDate; d = addDays(d, 1)) {
     const dKey = dateKey(d);
@@ -969,7 +1138,7 @@ function StatsView({
   const weeks = totalDays / 7;
 
   const builtInGoalCards = [
-    { key: 'workouts', cat: 'workout', label: 'Workouts',   weeklyGoal: goals.workouts },
+    { key: 'workouts', cat: 'workout', cats: WORKOUT_CATEGORIES, label: 'Workouts',   weeklyGoal: goals.workouts },
     { key: 'boxing',   cat: 'boxing',  label: 'Boxing',     weeklyGoal: goals.boxing   },
     { key: 'office',   cat: 'office',  label: 'Office days',weeklyGoal: goals.office   },
     { key: 'wfh',      cat: 'wfh',     label: 'WFH days',   weeklyGoal: goals.wfh      },
@@ -1108,11 +1277,12 @@ function StatsView({
 }
 
 function goalCardFromTotals(g, completedByCat, totals, weeks, minutesByCat) {
+  const cats = g.cats || [g.cat];
   const target = Math.max(1, Math.round(g.weeklyGoal * weeks));
-  const actual = completedByCat[g.cat] || 0;
-  const planned = totals[g.cat] || 0;
+  const actual = cats.reduce((s, c) => s + (completedByCat[c] || 0), 0);
+  const planned = cats.reduce((s, c) => s + (totals[c] || 0), 0);
   const pct = Math.min(100, Math.round((actual / target) * 100));
-  const minutes = (minutesByCat && minutesByCat[g.cat]) || 0;
+  const minutes = (minutesByCat ? cats.reduce((s, c) => s + (minutesByCat[c] || 0), 0) : 0);
   return { ...g, target, actual, planned, pct, minutes };
 }
 
@@ -1913,6 +2083,20 @@ function GlobalStyles() {
         transition: background 0.15s ease;
       }
       .stepper-btn:hover { background: rgba(0,0,0,0.1); }
+
+      .tile-picker {
+        position: absolute; top: 40px; right: 8px; z-index: 20;
+        background: white; border: 1px solid rgba(0,0,0,0.08);
+        border-radius: 14px; padding: 12px; min-width: 220px;
+        box-shadow: 0 12px 30px -10px rgba(0,0,0,0.18);
+      }
+      .tile-picker-row {
+        display: flex; align-items: center; gap: 8px;
+        padding: 6px 8px; border-radius: 8px; cursor: pointer;
+      }
+      .tile-picker-row:hover { background: rgba(0,0,0,0.04); }
+      .tile-picker-row input[type="checkbox"] { accent-color: #FF4D2E; cursor: pointer; }
+      .tile-picker-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 
       .desktop-nav { display: flex; }
       .mobile-nav {

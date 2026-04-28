@@ -166,6 +166,22 @@ export async function removeOneTimeTask(taskId) {
   if (error) throw error;
 }
 
+export async function updateOneTimeTask(taskId, patch) {
+  const payload = {};
+  if (patch.title !== undefined) payload.title = patch.title;
+  if (patch.time !== undefined) payload.time = patch.time;
+  if (patch.endTime !== undefined) payload.end_time = patch.endTime || null;
+  if (patch.category !== undefined) payload.category = patch.category;
+  const { data, error } = await supabase
+    .from('one_time_tasks').update(payload).eq('id', taskId)
+    .select().single();
+  if (error) throw error;
+  return {
+    id: data.id, title: data.title, time: data.time,
+    endTime: data.end_time || null, category: data.category,
+  };
+}
+
 // ---- Completions (date-keyed) ----
 
 export async function fetchCompletions() {
