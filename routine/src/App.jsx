@@ -1101,7 +1101,9 @@ function StatsView({
         completedByCat[task.category] = (completedByCat[task.category] || 0) + 1;
         const mins = taskDurationMinutes(task);
         if (mins > 0) {
-          totalMinutes += mins;
+          if (task.category !== 'office' && task.category !== 'wfh') {
+            totalMinutes += mins;
+          }
           minutesByCat[task.category] = (minutesByCat[task.category] || 0) + mins;
         }
         dayDone++;
