@@ -1881,6 +1881,8 @@ function TemplateEditor({ template, onSave, onClose }) {
   const [newTaskTime, setNewTaskTime] = useState('09:00');
   const [newTaskEndTime, setNewTaskEndTime] = useState('');
   const [newTaskCat, setNewTaskCat] = useState('workout');
+  const [editingTaskId, setEditingTaskId] = useState(null);
+  const [editDraft, setEditDraft] = useState({ title: '', time: '', endTime: '', category: 'workout' });
 
   const ACCENT_OPTIONS = ['#FF4D2E', '#E11D48', '#0F172A', '#0891B2', '#A16207', '#7C3AED'];
 
@@ -1893,6 +1895,18 @@ function TemplateEditor({ template, onSave, onClose }) {
     setNewTaskTitle(''); setNewTaskEndTime('');
   };
   const removeTask = (id) => setTasks(tasks.filter(t => t.id !== id));
+  const beginEditTask = (task) => {
+    setEditDraft({ title: task.title, time: task.time, endTime: task.endTime || '', category: task.category });
+    setEditingTaskId(task.id);
+  };
+  const saveEditTask = () => {
+    if (!editDraft.title.trim()) return;
+    setTasks(tasks.map(t => t.id === editingTaskId
+      ? { ...t, title: editDraft.title.trim(), time: editDraft.time, endTime: editDraft.endTime || null, category: editDraft.category }
+      : t
+    ).sort((a, b) => a.time.localeCompare(b.time)));
+    setEditingTaskId(null);
+  };
   const save = () => {
     if (!name.trim()) return;
     onSave({ id: template?.id, name: name.trim(), accent, tasks });
@@ -1944,6 +1958,46 @@ function TemplateEditor({ template, onSave, onClose }) {
             {tasks.map(task => {
               const cat = CATEGORY_STYLES[task.category];
               const Icon = cat.icon;
+              if (editingTaskId === task.id) {
+                return (
+                  <div key={task.id} style={{ padding: 10, background: 'rgba(0,0,0,0.04)', borderRadius: 10 }}>
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+                      {Object.entries(CATEGORY_STYLES).map(([key, c]) => {
+                        const I = c.icon;
+                        return (
+                          <button key={key} onClick={() => setEditDraft({ ...editDraft, category: key })} style={{
+                            padding: '5px 9px', borderRadius: 999, fontSize: 11, fontWeight: 600,
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                            background: editDraft.category === key ? c.color : c.bg,
+                            color: editDraft.category === key ? 'white' : c.color,
+                          }}>
+                            <I size={10} /> {c.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+                      <input className="input" autoFocus value={editDraft.title}
+                        onChange={(e) => setEditDraft({ ...editDraft, title: e.target.value })}
+                        onKeyDown={(e) => { if (e.key === 'Enter') saveEditTask(); if (e.key === 'Escape') setEditingTaskId(null); }}
+                        placeholder="Title" style={{ flex: 1, minWidth: 140 }} />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <input className="input" type="time" value={editDraft.time}
+                          onChange={(e) => setEditDraft({ ...editDraft, time: e.target.value })} style={{ width: 110 }} />
+                        <span style={{ fontSize: 12, color: '#737373' }}>–</span>
+                        <input className="input" type="time" value={editDraft.endTime}
+                          onChange={(e) => setEditDraft({ ...editDraft, endTime: e.target.value })} style={{ width: 110 }} />
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                      <button onClick={() => setEditingTaskId(null)} className="btn-ghost" style={{ fontSize: 13 }}>Cancel</button>
+                      <button onClick={saveEditTask} className="btn-primary" style={{ fontSize: 13, padding: '8px 14px' }}>
+                        <Check size={14} /> Save
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
               return (
                 <div key={task.id} style={{
                   display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px',
@@ -1955,6 +2009,7 @@ function TemplateEditor({ template, onSave, onClose }) {
                     <Icon size={12} color={cat.color} />
                   </div>
                   <span style={{ fontSize: 13, fontWeight: 500, flex: 1 }}>{task.title}</span>
+                  <button onClick={() => beginEditTask(task)} className="btn-ghost" style={{ padding: 4, color: '#737373' }} aria-label="Edit task"><Edit2 size={14} /></button>
                   <button onClick={() => removeTask(task.id)} className="btn-ghost" style={{ padding: 4 }}><X size={14} /></button>
                 </div>
               );
