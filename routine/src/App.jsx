@@ -26,6 +26,31 @@ const completionKey = (dKey, taskId, isOneTime = false) =>
 
 const formatTime = (time, endTime) => endTime ? `${time}–${endTime}` : time;
 
+function parseHHMM(s) {
+  if (!s || typeof s !== 'string') return null;
+  const [h, m] = s.split(':').map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+  return h * 60 + m;
+}
+
+function taskDurationMinutes(task) {
+  const start = parseHHMM(task.time);
+  const end = parseHHMM(task.endTime);
+  if (start === null || end === null) return 0;
+  let diff = end - start;
+  if (diff < 0) diff += 24 * 60; // handle overnight (e.g. 23:00 → 01:00)
+  return diff;
+}
+
+function formatHM(minutes) {
+  if (!minutes || minutes <= 0) return '0m';
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
 function getWeekDates() {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const todayIdx = today.getDay();
@@ -883,8 +908,10 @@ function StatsView({
   // Walk every day in window
   let totalTasks = 0, completedTasks = 0;
   let activeDays = 0;
+  let totalMinutes = 0;
   const totals = { workout: 0, boxing: 0, jiujitsu: 0, office: 0, wfh: 0, break: 0, custom: 0 };
   const completedByCat = { workout: 0, boxing: 0, jiujitsu: 0, office: 0, wfh: 0, break: 0, custom: 0 };
+  const minutesByCat = { workout: 0, boxing: 0, jiujitsu: 0, office: 0, wfh: 0, break: 0, custom: 0 };
 
   for (let d = new Date(startDate); d <= endDate; d = addDays(d, 1)) {
     const dKey = dateKey(d);
@@ -903,6 +930,11 @@ function StatsView({
       if (completed.has(completionKey(dKey, task.id, task.isOneTime))) {
         completedTasks++;
         completedByCat[task.category] = (completedByCat[task.category] || 0) + 1;
+        const mins = taskDurationMinutes(task);
+        if (mins > 0) {
+          totalMinutes += mins;
+          minutesByCat[task.category] = (minutesByCat[task.category] || 0) + mins;
+        }
         dayDone++;
       }
     });
@@ -943,12 +975,12 @@ function StatsView({
     { key: 'wfh',      cat: 'wfh',     label: 'WFH days',   weeklyGoal: goals.wfh      },
   ]
     .filter(g => g.weeklyGoal > 0)
-    .map(g => goalCardFromTotals(g, completedByCat, totals, weeks));
+    .map(g => goalCardFromTotals(g, completedByCat, totals, weeks, minutesByCat));
 
   const customGoalCards = customGoals.map(g =>
     goalCardFromTotals(
       { key: g.id, cat: g.category, label: g.name, weeklyGoal: g.weeklyTarget, custom: true, id: g.id },
-      completedByCat, totals, weeks
+      completedByCat, totals, weeks, minutesByCat
     )
   );
 
@@ -1014,6 +1046,14 @@ function StatsView({
                 ACTIVE DAYS
               </div>
             </div>
+            <div>
+              <div style={{ fontFamily: "'Fraunces', serif", fontStyle: 'italic', fontWeight: 600, fontSize: 24, color: '#FF4D2E' }}>
+                {formatHM(totalMinutes)}
+              </div>
+              <div className="mono" style={{ fontSize: 9, color: 'rgba(250,250,247,0.5)', letterSpacing: '0.15em', marginTop: 4 }}>
+                TIME INVESTED
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1067,12 +1107,13 @@ function StatsView({
   );
 }
 
-function goalCardFromTotals(g, completedByCat, totals, weeks) {
+function goalCardFromTotals(g, completedByCat, totals, weeks, minutesByCat) {
   const target = Math.max(1, Math.round(g.weeklyGoal * weeks));
   const actual = completedByCat[g.cat] || 0;
   const planned = totals[g.cat] || 0;
   const pct = Math.min(100, Math.round((actual / target) * 100));
-  return { ...g, target, actual, planned, pct };
+  const minutes = (minutesByCat && minutesByCat[g.cat]) || 0;
+  return { ...g, target, actual, planned, pct, minutes };
 }
 
 function GoalCard({ g, onUpdate, onDelete }) {
@@ -1143,11 +1184,14 @@ function GoalCard({ g, onUpdate, onDelete }) {
           <div className="progress-bar" style={{ marginBottom: 8 }}>
             <div className="progress-fill" style={{ width: `${g.pct}%`, background: cat.color }} />
           </div>
-          {g.planned > g.actual && (
-            <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.05em' }}>
-              {g.actual} done · {g.planned - g.actual} planned but not completed
-            </div>
-          )}
+          <div className="mono" style={{ fontSize: 10, color: '#737373', letterSpacing: '0.05em', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {g.minutes > 0 && (
+              <span style={{ color: cat.color, fontWeight: 600 }}>⏱ {formatHM(g.minutes)} INVESTED</span>
+            )}
+            {g.planned > g.actual && (
+              <span>{g.actual} done · {g.planned - g.actual} planned but not completed</span>
+            )}
+          </div>
         </>
       )}
     </div>
