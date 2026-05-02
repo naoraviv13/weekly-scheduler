@@ -96,6 +96,16 @@ export default function ScheduleApp({ session }) {
   const [showDayDetail, setShowDayDetail] = useState(null); // dateKey | null
   const [creatingTemplate, setCreatingTemplate] = useState(false);
   const [editingGoals, setEditingGoals] = useState(false);
+  // Per-day template-task overrides: { [dKey]: { [templateTaskId]: oneTimeTaskId } }
+  const [templateOverrides, setTemplateOverrides] = useState(() => {
+    try {
+      const raw = localStorage.getItem('routine:templateOverrides:v1');
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('routine:templateOverrides:v1', JSON.stringify(templateOverrides)); } catch {}
+  }, [templateOverrides]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'auto' });
@@ -162,6 +172,17 @@ export default function ScheduleApp({ session }) {
     if (completed.has(ck)) {
       const next = new Set(completed); next.delete(ck); setCompleted(next);
     }
+    // If this one-time task was an override of a template task, restore the template task
+    setTemplateOverrides(prev => {
+      const dayMap = prev[dKey];
+      if (!dayMap) return prev;
+      const entry = Object.entries(dayMap).find(([, otId]) => otId === taskId);
+      if (!entry) return prev;
+      const { [entry[0]]: _, ...restDay } = dayMap;
+      const next = { ...prev };
+      if (Object.keys(restDay).length === 0) delete next[dKey]; else next[dKey] = restDay;
+      return next;
+    });
     try { await db.removeOneTimeTask(taskId); } catch (e) { console.error('Remove failed:', e); }
   };
 
@@ -186,6 +207,36 @@ export default function ScheduleApp({ session }) {
     try {
       await db.upsertTemplate({ id: templateId, name: tpl.name, accent: tpl.accent, tasks: updatedTasks }, userId);
     } catch (e) { console.error('Update template task failed:', e); }
+  };
+
+  // Override a template-task occurrence for a single day (does NOT modify the template).
+  // Hides the original template task on that day and adds a one-time task with patched values.
+  const overrideTemplateTaskOnDay = async (dKey, originalTask, patch) => {
+    const merged = {
+      title: patch.title ?? originalTask.title,
+      time: patch.time ?? originalTask.time,
+      endTime: patch.endTime !== undefined ? patch.endTime : (originalTask.endTime || null),
+      category: patch.category ?? originalTask.category,
+    };
+    const wasComplete = completed.has(completionKey(dKey, originalTask.id, false));
+    try {
+      const saved = await db.addOneTimeTask(dKey, merged, userId);
+      setOneTimeTasks(prev => {
+        const existing = prev[dKey] || [];
+        return { ...prev, [dKey]: [...existing, saved].sort((a, b) => a.time.localeCompare(b.time)) };
+      });
+      setTemplateOverrides(prev => ({
+        ...prev,
+        [dKey]: { ...(prev[dKey] || {}), [originalTask.id]: saved.id },
+      }));
+      if (wasComplete) {
+        const next = new Set(completed);
+        next.delete(completionKey(dKey, originalTask.id, false));
+        next.add(completionKey(dKey, saved.id, true));
+        setCompleted(next);
+        try { await db.toggleCompletion(dKey, saved.id, true, false, userId); } catch (e) { console.error('Transfer completion failed:', e); }
+      }
+    } catch (e) { console.error('Override template task failed:', e); }
   };
 
   const handleSetWeekAssignments = async (newAssignments) => {
@@ -263,7 +314,12 @@ export default function ScheduleApp({ session }) {
   // Get tasks for a specific date
   const getTasksForDate = (dKey, dow) => {
     const tid = weekAssignments[dow];
-    const tplTasks = tid ? (getTemplate(tid)?.tasks || []).map(t => ({ ...t, isOneTime: false })) : [];
+    const overrides = templateOverrides?.[dKey] || {};
+    const tplTasks = tid
+      ? (getTemplate(tid)?.tasks || [])
+          .filter(t => !overrides[t.id])
+          .map(t => ({ ...t, isOneTime: false }))
+      : [];
     const oneTimes = (oneTimeTasks[dKey] || []).map(t => ({ ...t, isOneTime: true }));
     return [...tplTasks, ...oneTimes].sort((a, b) => a.time.localeCompare(b.time));
   };
@@ -340,7 +396,9 @@ export default function ScheduleApp({ session }) {
           toggleComplete={toggleComplete} getTemplate={getTemplate}
           showDayDetail={showDayDetail} setShowDayDetail={setShowDayDetail}
           addOneTimeTask={addOneTimeTask} removeOneTimeTask={removeOneTimeTask}
-          updateOneTimeTask={updateOneTimeTask} updateTemplateTask={updateTemplateTask}
+          updateOneTimeTask={updateOneTimeTask}
+          overrideTemplateTaskOnDay={overrideTemplateTaskOnDay}
+          templateOverrides={templateOverrides}
           weekDates={weekDates} todayIdx={todayIdx} todayKey={todayKey}
           hero={hero}
         />
@@ -350,6 +408,7 @@ export default function ScheduleApp({ session }) {
           templates={templates} weekAssignments={weekAssignments}
           oneTimeTasks={oneTimeTasks} completed={completed}
           getTemplate={getTemplate} goals={goals}
+          templateOverrides={templateOverrides}
           onSaveGoals={handleSaveGoals}
           customGoals={customGoals}
           onAddCustomGoal={handleAddCustomGoal}
@@ -421,7 +480,8 @@ export default function ScheduleApp({ session }) {
 function WeekView({
   templates, weekAssignments, setWeekAssignments, oneTimeTasks, completed,
   toggleComplete, getTemplate, showDayDetail, setShowDayDetail,
-  addOneTimeTask, removeOneTimeTask, updateOneTimeTask, updateTemplateTask,
+  addOneTimeTask, removeOneTimeTask, updateOneTimeTask, overrideTemplateTaskOnDay,
+  templateOverrides,
   weekDates, todayIdx, todayKey, hero,
 }) {
   const carouselRef = useRef(null);
@@ -436,7 +496,12 @@ function WeekView({
 
   const getDayTasks = (dKey, dow) => {
     const tid = weekAssignments[dow];
-    const tpl = tid ? (getTemplate(tid)?.tasks || []).map(t => ({ ...t, isOneTime: false })) : [];
+    const overrides = templateOverrides?.[dKey] || {};
+    const tpl = tid
+      ? (getTemplate(tid)?.tasks || [])
+          .filter(t => !overrides[t.id])
+          .map(t => ({ ...t, isOneTime: false }))
+      : [];
     const oo = (oneTimeTasks[dKey] || []).map(t => ({ ...t, isOneTime: true }));
     return [...tpl, ...oo].sort((a, b) => a.time.localeCompare(b.time));
   };
@@ -703,7 +768,8 @@ function WeekView({
             tasks={getDayTasks(dKey, dow)}
             completed={completed} toggleComplete={toggleComplete} getTemplate={getTemplate}
             addOneTimeTask={addOneTimeTask} removeOneTimeTask={removeOneTimeTask}
-            updateOneTimeTask={updateOneTimeTask} updateTemplateTask={updateTemplateTask}
+            updateOneTimeTask={updateOneTimeTask}
+            overrideTemplateTaskOnDay={overrideTemplateTaskOnDay}
             onClose={() => setShowDayDetail(null)}
           />
         );
@@ -730,7 +796,7 @@ function StatBox({ num, label, color, border }) {
 function DayDetailSheet({
   dateKey: dKey, dow, dateNum, isToday, templates, weekAssignments, setWeekAssignments,
   tasks, completed, toggleComplete, getTemplate, addOneTimeTask, removeOneTimeTask,
-  updateOneTimeTask, updateTemplateTask, onClose,
+  updateOneTimeTask, overrideTemplateTaskOnDay, onClose,
 }) {
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [showAddOneTime, setShowAddOneTime] = useState(false);
@@ -833,8 +899,8 @@ function DayDetailSheet({
                 <TaskCheckRow key={task.id} task={task}
                   isComplete={completed.has(completionKey(dKey, task.id, false))}
                   onToggle={() => toggleComplete(dKey, task.id, false)}
-                  onSaveEdit={(patch) => updateTemplateTask(tid, task.id, patch)}
-                  editHint={template ? `Edits the "${template.name}" template (applies to every day using it)` : null}
+                  onSaveEdit={(patch) => overrideTemplateTaskOnDay(dKey, task, patch)}
+                  editHint={template ? `Only edits this day's occurrence — the "${template.name}" template stays unchanged.` : null}
                 />
               ))}
             </div>
@@ -1056,12 +1122,12 @@ function OneTimeComposer({ onSave, onCancel }) {
 
 function StatsView({
   templates, weekAssignments, oneTimeTasks, completed, getTemplate, goals, onSaveGoals,
+  templateOverrides,
   customGoals, onAddCustomGoal, onUpdateCustomGoal, onDeleteCustomGoal,
   weightEntries, onSaveWeight, onDeleteWeight, todayKey, onEditGoals,
 }) {
   const [windowMode, setWindowMode] = useState('rolling'); // 'rolling' | 'month' | 'quarter' | 'year'
   const [showCreateGoal, setShowCreateGoal] = useState(false);
-  const [weightWindow, setWeightWindow] = useState('month'); // 'month' | 'quarter' | 'year'
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const { startDate, endDate, label, totalDays } = (() => {
@@ -1090,7 +1156,8 @@ function StatsView({
     const dKey = dateKey(d);
     const dow = d.getDay();
     const tid = weekAssignments[dow];
-    const tplTasks = tid ? (getTemplate(tid)?.tasks || []) : [];
+    const overrides = templateOverrides?.[dKey] || {};
+    const tplTasks = tid ? (getTemplate(tid)?.tasks || []).filter(t => !overrides[t.id]) : [];
     const oneTimes = oneTimeTasks[dKey] || [];
     const allTasks = [
       ...tplTasks.map(t => ({ ...t, isOneTime: false })),
@@ -1123,7 +1190,8 @@ function StatsView({
       const dKey = dateKey(d);
       const dow = d.getDay();
       const tid = weekAssignments[dow];
-      const tplTasks = tid ? (getTemplate(tid)?.tasks || []) : [];
+      const overrides = templateOverrides?.[dKey] || {};
+      const tplTasks = tid ? (getTemplate(tid)?.tasks || []).filter(t => !overrides[t.id]) : [];
       const oneTimes = oneTimeTasks[dKey] || [];
       const all = [
         ...tplTasks.map(t => ({ ...t, isOneTime: false })),
@@ -1237,7 +1305,7 @@ function StatsView({
       <WeightTracker
         weightEntries={weightEntries} todayKey={todayKey}
         onSave={onSaveWeight} onDelete={onDeleteWeight}
-        windowMode={weightWindow} setWindowMode={setWeightWindow}
+        windowMode={windowMode}
       />
 
       {/* Goals header */}
@@ -1466,7 +1534,7 @@ function CustomGoalEditor({ onSave, onClose }) {
 // Weight tracker + chart
 // ---------------------------------------------------------------------------
 
-function WeightTracker({ weightEntries, todayKey, onSave, onDelete, windowMode, setWindowMode }) {
+function WeightTracker({ weightEntries, todayKey, onSave, onDelete, windowMode }) {
   const todayEntry = weightEntries.find(w => w.date === todayKey);
   const [draft, setDraft] = useState(todayEntry ? String(todayEntry.weight) : '');
   const [editing, setEditing] = useState(!todayEntry);
@@ -1477,8 +1545,17 @@ function WeightTracker({ weightEntries, todayKey, onSave, onDelete, windowMode, 
   }, [todayEntry?.weight, todayKey]);
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const days = windowMode === 'month' ? 30 : windowMode === 'quarter' ? 90 : 365;
-  const startDate = addDays(today, -(days - 1));
+  const { startDate, days } = (() => {
+    if (windowMode === 'month') {
+      const start = new Date(today.getFullYear(), today.getMonth(), 1);
+      const d = Math.round((today - start) / 86400000) + 1;
+      return { startDate: start, days: d };
+    }
+    if (windowMode === 'quarter') return { startDate: addDays(today, -89), days: 90 };
+    if (windowMode === 'year') return { startDate: addDays(today, -364), days: 365 };
+    // rolling = last 4 weeks
+    return { startDate: addDays(today, -27), days: 28 };
+  })();
   const startKey = dateKey(startDate);
   const windowEntries = weightEntries
     .filter(w => w.date >= startKey)
@@ -1512,11 +1589,6 @@ function WeightTracker({ weightEntries, todayKey, onSave, onDelete, windowMode, 
               {windowEntries.length} ENTRIES · KG
             </div>
           </div>
-        </div>
-        <div style={{ display: 'flex', gap: 4, background: 'rgba(0,0,0,0.04)', padding: 4, borderRadius: 999 }}>
-          <button className={`pill-tab ${windowMode === 'month' ? 'active' : ''}`} onClick={() => setWindowMode('month')} style={{ padding: '6px 12px', fontSize: 12 }}>1M</button>
-          <button className={`pill-tab ${windowMode === 'quarter' ? 'active' : ''}`} onClick={() => setWindowMode('quarter')} style={{ padding: '6px 12px', fontSize: 12 }}>3M</button>
-          <button className={`pill-tab ${windowMode === 'year' ? 'active' : ''}`} onClick={() => setWindowMode('year')} style={{ padding: '6px 12px', fontSize: 12 }}>1Y</button>
         </div>
       </div>
 
@@ -1584,6 +1656,7 @@ function WeightTracker({ weightEntries, todayKey, onSave, onDelete, windowMode, 
 }
 
 function WeightChart({ entries, startDate, endDate, days }) {
+  const [selected, setSelected] = useState(null);
   if (entries.length === 0) {
     return (
       <div style={{
@@ -1646,7 +1719,7 @@ function WeightChart({ entries, startDate, endDate, days }) {
   })();
 
   return (
-    <div style={{ width: '100%', position: 'relative' }}>
+    <div style={{ width: '100%', position: 'relative' }} onClick={() => setSelected(null)}>
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: '100%', height: 180, display: 'block' }}>
         <defs>
           <linearGradient id="wgrad" x1="0" x2="0" y1="0" y2="1">
@@ -1669,12 +1742,26 @@ function WeightChart({ entries, startDate, endDate, days }) {
         {/* Area + line */}
         {areaD && <path d={areaD} fill="url(#wgrad)" />}
         <path d={pathD} fill="none" stroke="#7C3AED" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-        {/* Points (only if not too many) */}
-        {points.length <= 60 && points.map((p, i) => (
-          <circle key={i} cx={p.x} cy={p.y} r="2.5" fill="#7C3AED">
-            <title>{p.date}: {p.weight.toFixed(1)} kg</title>
-          </circle>
-        ))}
+        {/* Points: always render for clicking; smaller hit area when many */}
+        {points.map((p, i) => {
+          const isSel = selected?.date === p.date;
+          return (
+            <g key={i}>
+              <circle
+                cx={p.x} cy={p.y} r={isSel ? 5 : (points.length <= 60 ? 2.5 : 0)}
+                fill={isSel ? '#0A0A0A' : '#7C3AED'}
+                stroke={isSel ? 'white' : 'none'} strokeWidth={isSel ? 2 : 0}
+                style={{ pointerEvents: 'none' }}
+              />
+              {/* Larger transparent hit target */}
+              <circle
+                cx={p.x} cy={p.y} r={10} fill="transparent"
+                style={{ cursor: 'pointer' }}
+                onClick={(e) => { e.stopPropagation(); setSelected(p); }}
+              />
+            </g>
+          );
+        })}
         {/* X labels */}
         {xLabels.map((t, i) => (
           <text key={i} x={t.x} y={H - 6} textAnchor="middle" fontSize="10" fill="#A3A3A3" fontFamily="JetBrains Mono, monospace">
@@ -1682,6 +1769,45 @@ function WeightChart({ entries, startDate, endDate, days }) {
           </text>
         ))}
       </svg>
+      {selected && (() => {
+        const xPct = (selected.x / W) * 100;
+        const yPct = (selected.y / H) * 100;
+        const d = new Date(selected.date + 'T00:00:00');
+        const dayLabels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+        const monthLabels = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'absolute',
+              left: `${xPct}%`,
+              top: `${yPct}%`,
+              transform: `translate(-50%, calc(-100% - 12px))`,
+              background: '#0A0A0A',
+              color: 'white',
+              padding: '8px 12px',
+              borderRadius: 10,
+              fontSize: 12,
+              boxShadow: '0 6px 20px rgba(0,0,0,0.18)',
+              whiteSpace: 'nowrap',
+              pointerEvents: 'auto',
+              zIndex: 2,
+            }}
+          >
+            <div className="mono" style={{ fontSize: 9, opacity: 0.6, letterSpacing: '0.1em', marginBottom: 2 }}>
+              {dayLabels[d.getDay()]} {d.getDate()} {monthLabels[d.getMonth()]} {d.getFullYear()}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+              <span className="display-font" style={{ fontSize: 18, fontWeight: 600, fontStyle: 'italic' }}>{selected.weight.toFixed(1)}</span>
+              <span style={{ fontSize: 11, opacity: 0.7 }}>kg</span>
+            </div>
+            <div style={{
+              position: 'absolute', left: '50%', bottom: -5, transform: 'translateX(-50%) rotate(45deg)',
+              width: 10, height: 10, background: '#0A0A0A',
+            }} />
+          </div>
+        );
+      })()}
     </div>
   );
 }
