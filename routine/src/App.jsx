@@ -211,8 +211,7 @@ export default function ScheduleApp({ session }) {
 
   // Override a template-task occurrence for a single day (does NOT modify the template).
   // Hides the original template task on that day and adds a one-time task with patched values.
-  const overrideTemplateTaskOnDay = async (dKey, originalTask, patch) => {
-    const merged = {
+  const overrideTemplateTaskOnDay = async (dKey, originalTask, patch) => {    const merged = {
       title: patch.title ?? originalTask.title,
       time: patch.time ?? originalTask.time,
       endTime: patch.endTime !== undefined ? patch.endTime : (originalTask.endTime || null),
@@ -237,6 +236,19 @@ export default function ScheduleApp({ session }) {
         try { await db.toggleCompletion(dKey, saved.id, true, false, userId); } catch (e) { console.error('Transfer completion failed:', e); }
       }
     } catch (e) { console.error('Override template task failed:', e); }
+  };
+
+  // Hide a template-task occurrence on a single day (does NOT modify the template).
+  const removeTemplateTaskOnDay = (dKey, originalTaskId) => {
+    setTemplateOverrides(prev => ({
+      ...prev,
+      [dKey]: { ...(prev[dKey] || {}), [originalTaskId]: 'removed' },
+    }));
+    const ck = completionKey(dKey, originalTaskId, false);
+    if (completed.has(ck)) {
+      const next = new Set(completed); next.delete(ck); setCompleted(next);
+      db.toggleCompletion(dKey, originalTaskId, false, true, userId).catch(e => console.error('Clear completion failed:', e));
+    }
   };
 
   const handleSetWeekAssignments = async (newAssignments) => {
@@ -398,6 +410,7 @@ export default function ScheduleApp({ session }) {
           addOneTimeTask={addOneTimeTask} removeOneTimeTask={removeOneTimeTask}
           updateOneTimeTask={updateOneTimeTask}
           overrideTemplateTaskOnDay={overrideTemplateTaskOnDay}
+          removeTemplateTaskOnDay={removeTemplateTaskOnDay}
           templateOverrides={templateOverrides}
           weekDates={weekDates} todayIdx={todayIdx} todayKey={todayKey}
           hero={hero}
@@ -481,6 +494,7 @@ function WeekView({
   templates, weekAssignments, setWeekAssignments, oneTimeTasks, completed,
   toggleComplete, getTemplate, showDayDetail, setShowDayDetail,
   addOneTimeTask, removeOneTimeTask, updateOneTimeTask, overrideTemplateTaskOnDay,
+  removeTemplateTaskOnDay,
   templateOverrides,
   weekDates, todayIdx, todayKey, hero,
 }) {
@@ -770,6 +784,7 @@ function WeekView({
             addOneTimeTask={addOneTimeTask} removeOneTimeTask={removeOneTimeTask}
             updateOneTimeTask={updateOneTimeTask}
             overrideTemplateTaskOnDay={overrideTemplateTaskOnDay}
+            removeTemplateTaskOnDay={removeTemplateTaskOnDay}
             onClose={() => setShowDayDetail(null)}
           />
         );
@@ -796,7 +811,7 @@ function StatBox({ num, label, color, border }) {
 function DayDetailSheet({
   dateKey: dKey, dow, dateNum, isToday, templates, weekAssignments, setWeekAssignments,
   tasks, completed, toggleComplete, getTemplate, addOneTimeTask, removeOneTimeTask,
-  updateOneTimeTask, overrideTemplateTaskOnDay, onClose,
+  updateOneTimeTask, overrideTemplateTaskOnDay, removeTemplateTaskOnDay, onClose,
 }) {
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [showAddOneTime, setShowAddOneTime] = useState(false);
@@ -900,6 +915,8 @@ function DayDetailSheet({
                   isComplete={completed.has(completionKey(dKey, task.id, false))}
                   onToggle={() => toggleComplete(dKey, task.id, false)}
                   onSaveEdit={(patch) => overrideTemplateTaskOnDay(dKey, task, patch)}
+                  onRemove={() => removeTemplateTaskOnDay(dKey, task.id)}
+                  removeConfirm={`Hide "${task.title}" on this day only? The template won't be changed.`}
                   editHint={template ? `Only edits this day's occurrence — the "${template.name}" template stays unchanged.` : null}
                 />
               ))}
@@ -955,7 +972,7 @@ function DayDetailSheet({
   );
 }
 
-function TaskCheckRow({ task, isComplete, onToggle, onRemove, onSaveEdit, editHint }) {
+function TaskCheckRow({ task, isComplete, onToggle, onRemove, onSaveEdit, editHint, removeConfirm }) {
   const cat = CATEGORY_STYLES[task.category];
   const Icon = cat.icon;
   const [justChecked, setJustChecked] = useState(false);
@@ -1055,7 +1072,7 @@ function TaskCheckRow({ task, isComplete, onToggle, onRemove, onSaveEdit, editHi
         </button>
       )}
       {onRemove && (
-        <button onClick={onRemove} className="btn-ghost" style={{ padding: 6, color: '#A3A3A3' }}>
+        <button onClick={() => { if (!removeConfirm || confirm(removeConfirm)) onRemove(); }} className="btn-ghost" style={{ padding: 6, color: '#A3A3A3' }}>
           <X size={14} />
         </button>
       )}
