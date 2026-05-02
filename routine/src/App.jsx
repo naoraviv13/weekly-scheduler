@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus, X, Edit2, Copy, Trash2, Dumbbell, Home, Building2, Zap, Coffee, Sparkles,
   GripVertical, Check, Calendar, Flame, LayoutGrid, Library, LogOut, BarChart3,
-  Minus, Settings, TrendingUp, Scale, Target, Hand, Goal,
+  Minus, Settings, TrendingUp, Scale, Target, Shirt, Goal,
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import * as db from './supabaseData';
@@ -11,7 +11,7 @@ import { dateKey, getWeekStart, addDays } from './supabaseData';
 const CATEGORY_STYLES = {
   workout:  { icon: Dumbbell, label: 'Gym',        color: '#FF4D2E', bg: 'rgba(255, 77, 46, 0.08)' },
   boxing:   { icon: Zap,      label: 'Boxing',     color: '#E11D48', bg: 'rgba(225, 29, 72, 0.08)' },
-  jiujitsu: { icon: Hand,     label: 'Jiu-Jitsu',  color: '#1E40AF', bg: 'rgba(30, 64, 175, 0.08)' },
+  jiujitsu: { icon: Shirt,    label: 'Jiu-Jitsu',  color: '#1E40AF', bg: 'rgba(30, 64, 175, 0.08)' },
   football: { icon: Goal,     label: 'Football',   color: '#16A34A', bg: 'rgba(22, 163, 74, 0.08)' },
   office:   { icon: Building2,label: 'Office',     color: '#0F172A', bg: 'rgba(15, 23, 42, 0.06)' },
   wfh:      { icon: Home,     label: 'WFH',        color: '#0891B2', bg: 'rgba(8, 145, 178, 0.08)' },
