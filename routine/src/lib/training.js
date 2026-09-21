@@ -16,7 +16,11 @@ export const EQUIPMENT = [
   'barbell',
   'dumbbell',
   'machine',
+  'plate-loaded',
+  'smith',
   'cable',
+  'kettlebell',
+  'band',
   'bodyweight',
   'none',
 ];

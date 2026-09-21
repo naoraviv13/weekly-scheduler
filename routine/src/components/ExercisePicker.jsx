@@ -12,6 +12,7 @@ export function ExercisePicker({ open, onClose, onPick, multi = false, title = '
   const { exercises, createExercise } = useData();
   const [query, setQuery] = useState('');
   const [group, setGroup] = useState('all');
+  const [equipment, setEquipment] = useState('all');
   const [selected, setSelected] = useState([]);
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState({ name: '', muscleGroup: 'chest', equipment: 'barbell' });
@@ -21,14 +22,16 @@ export function ExercisePicker({ open, onClose, onPick, multi = false, title = '
     const q = query.trim().toLowerCase();
     return exercises.filter((e) => {
       if (group !== 'all' && e.muscleGroup !== group) return false;
+      if (equipment !== 'all' && e.equipment !== equipment) return false;
       if (q && !e.name.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [exercises, query, group]);
+  }, [exercises, query, group, equipment]);
 
   const reset = () => {
     setQuery('');
     setGroup('all');
+    setEquipment('all');
     setSelected([]);
     setCreating(false);
     setError(null);
@@ -163,7 +166,7 @@ export function ExercisePicker({ open, onClose, onPick, multi = false, title = '
             />
           </div>
 
-          <div className="-mx-5 mb-3 flex gap-1.5 overflow-x-auto px-5 pb-1">
+          <div className="-mx-5 mb-2 flex gap-1.5 overflow-x-auto px-5 pb-1">
             {['all', ...MUSCLE_GROUPS].map((g) => (
               <button
                 key={g}
@@ -175,6 +178,22 @@ export function ExercisePicker({ open, onClose, onPick, multi = false, title = '
                 }`}
               >
                 {g}
+              </button>
+            ))}
+          </div>
+
+          <div className="-mx-5 mb-3 flex gap-1.5 overflow-x-auto px-5 pb-1">
+            {['all', ...EQUIPMENT].map((eq) => (
+              <button
+                key={eq}
+                onClick={() => setEquipment(eq)}
+                className={`shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-medium capitalize transition ${
+                  equipment === eq
+                    ? 'bg-sky-400/20 text-sky-400 ring-1 ring-sky-400/40'
+                    : 'bg-ink-800/60 text-fog-400 hover:bg-ink-700'
+                }`}
+              >
+                {eq === 'all' ? 'any equipment' : eq}
               </button>
             ))}
           </div>

@@ -9,6 +9,7 @@ export default function ExercisesRoute() {
   const { exercises, personalRecords, createExercise } = useData();
   const [query, setQuery] = useState('');
   const [group, setGroup] = useState('all');
+  const [equipment, setEquipment] = useState('all');
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState({ name: '', muscleGroup: 'chest', equipment: 'barbell' });
   const [error, setError] = useState(null);
@@ -17,10 +18,11 @@ export default function ExercisesRoute() {
     const q = query.trim().toLowerCase();
     return exercises.filter((e) => {
       if (group !== 'all' && e.muscleGroup !== group) return false;
+      if (equipment !== 'all' && e.equipment !== equipment) return false;
       if (q && !e.name.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [exercises, query, group]);
+  }, [exercises, query, group, equipment]);
 
   const submitNew = async (e) => {
     e.preventDefault();
@@ -77,6 +79,26 @@ export default function ExercisesRoute() {
           </button>
         ))}
       </div>
+
+      <div className="-mx-4 -mt-2 flex gap-1.5 overflow-x-auto px-4 pb-1">
+        {['all', ...EQUIPMENT].map((eq) => (
+          <button
+            key={eq}
+            onClick={() => setEquipment(eq)}
+            className={`shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-medium capitalize transition ${
+              equipment === eq
+                ? 'bg-sky-400/20 text-sky-400 ring-1 ring-sky-400/40'
+                : 'bg-ink-800/60 text-fog-400 hover:bg-ink-700'
+            }`}
+          >
+            {eq === 'all' ? 'any equipment' : eq}
+          </button>
+        ))}
+      </div>
+
+      <p className="-mt-1 font-mono text-[10px] text-fog-400">
+        {filtered.length} of {exercises.length} exercises
+      </p>
 
       {filtered.length === 0 ? (
         <div className="card">
