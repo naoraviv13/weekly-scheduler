@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Scale, Trash2, Flame, ChevronRight } from 'lucide-react';
+import { Scale, Trash2, Flame, ChevronRight, Ruler, Trophy } from 'lucide-react';
 import { useData } from '../lib/dataContext';
-import { SectionHeader, StatTile, EmptyState, Sheet } from '../components/ui';
+import { SectionHeader, StatTile, EmptyState, Sheet, MuscleChip } from '../components/ui';
+import { VolumeBars, MuscleSplit } from '../components/charts';
 import { dateKey, addDays } from '../supabaseData';
 import {
   trimNum,
@@ -12,6 +13,12 @@ import {
   workoutSetCount,
   formatDuration,
   elapsedSeconds,
+  weeklyVolume,
+  muscleSplit,
+  recentPersonalRecords,
+  groupMeasurements,
+  metricLabel,
+  unitSuffix,
 } from '../lib/training';
 
 const RANGES = [
@@ -208,7 +215,7 @@ function ActivityHeatmap({ history, weeks = 18 }) {
 }
 
 export default function ProgressRoute() {
-  const { weightEntries, history, saveWeight, removeWeight } = useData();
+  const { weightEntries, history, measurements, saveWeight, removeWeight } = useData();
   const [range, setRange] = useState('quarter');
   const [weightSheet, setWeightSheet] = useState(false);
   const [draft, setDraft] = useState('');
@@ -243,6 +250,23 @@ export default function ProgressRoute() {
   const latest = weightEntries.length > 0 ? weightEntries[weightEntries.length - 1] : null;
   const first = windowEntries.length > 0 ? windowEntries[0] : null;
   const delta = latest && first && latest.date !== first.date ? latest.weight - first.weight : null;
+
+  // Show roughly one bar per week of the selected range, capped so the
+  // bars stay wide enough to tap on a phone.
+  const volumeBuckets = useMemo(
+    () => weeklyVolume(history, Math.min(26, Math.max(6, Math.round(days / 7))), new Date(nowMs)),
+    [history, days, nowMs],
+  );
+
+  const split = useMemo(() => muscleSplit(windowWorkouts), [windowWorkouts]);
+  const prFeed = useMemo(() => recentPersonalRecords(history, 6), [history]);
+
+  const measurementSummary = useMemo(() => {
+    const grouped = groupMeasurements(measurements);
+    return Object.entries(grouped)
+      .map(([metric, g]) => ({ metric, latest: g.latest, delta: g.delta }))
+      .slice(0, 4);
+  }, [measurements]);
 
   const today = dateKey(new Date());
   const todayEntry = weightEntries.find((w) => w.date === today);
@@ -282,11 +306,105 @@ export default function ProgressRoute() {
       </div>
 
       <section>
+        <SectionHeader>Weekly volume</SectionHeader>
+        <div className="card px-4 py-4">
+          <VolumeBars buckets={volumeBuckets} />
+        </div>
+      </section>
+
+      <section>
+        <SectionHeader>Muscle split</SectionHeader>
+        <div className="card px-4 py-4">
+          <MuscleSplit split={split} />
+        </div>
+      </section>
+
+      <section>
         <SectionHeader>Activity</SectionHeader>
         <div className="card px-3 py-3">
           <ActivityHeatmap history={history} />
         </div>
       </section>
+
+      <section>
+        <SectionHeader
+          action={
+            <Link to="/measurements" className="text-xs font-medium text-volt-300">
+              {measurementSummary.length > 0 ? 'All' : 'Log'}
+            </Link>
+          }
+        >
+          Measurements
+        </SectionHeader>
+
+        {measurementSummary.length === 0 ? (
+          <Link to="/measurements" className="card block transition hover:border-ink-600">
+            <EmptyState
+              icon={Ruler}
+              title="No measurements yet"
+              body="Track chest, waist, arms and body fat alongside your lifting."
+            />
+          </Link>
+        ) : (
+          <Link to="/measurements" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {measurementSummary.map((m) => (
+              <div key={m.metric} className="card px-3 py-3 transition hover:border-ink-600">
+                <p className="label-mono">{metricLabel(m.metric)}</p>
+                <p className="mt-1 flex items-baseline gap-1">
+                  <span className="font-mono text-lg font-bold tabular-nums">
+                    {trimNum(m.latest.value)}
+                  </span>
+                  <span className="text-[10px] text-fog-400">{unitSuffix(m.latest.unit)}</span>
+                </p>
+                {m.delta !== null && m.delta !== 0 && (
+                  <p
+                    className={`mt-0.5 font-mono text-[11px] ${
+                      m.delta > 0 ? 'text-mint-400' : 'text-flame-400'
+                    }`}
+                  >
+                    {m.delta > 0 ? '+' : ''}
+                    {trimNum(m.delta)}
+                  </p>
+                )}
+              </div>
+            ))}
+          </Link>
+        )}
+      </section>
+
+      {prFeed.length > 0 && (
+        <section>
+          <SectionHeader>Recent records</SectionHeader>
+          <div className="flex flex-col gap-2">
+            {prFeed.map((pr, i) => (
+              <Link
+                key={`${pr.workoutId}-${pr.exerciseId}-${i}`}
+                to={`/exercises/${pr.exerciseId}`}
+                className="card flex items-center gap-3 px-4 py-3 transition hover:border-ink-600"
+              >
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-volt-300/10 text-volt-300">
+                  <Trophy size={16} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold">{pr.name}</p>
+                  <div className="mt-0.5 flex items-center gap-1.5">
+                    {pr.muscleGroup && <MuscleChip group={pr.muscleGroup} />}
+                    <span className="font-mono text-[11px] text-fog-400">
+                      {trimNum(pr.weightKg)}×{pr.reps} · {formatDateLabel(pr.date)}
+                    </span>
+                  </div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <p className="label-mono">Est. 1RM</p>
+                  <p className="font-mono text-sm font-bold tabular-nums text-volt-300">
+                    {trimNum(Math.round(pr.oneRm))}
+                  </p>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section>
         <SectionHeader

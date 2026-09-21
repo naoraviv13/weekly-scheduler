@@ -15,6 +15,7 @@ import ActiveWorkoutRoute from './routes/ActiveWorkout.jsx';
 import ExercisesRoute from './routes/Exercises.jsx';
 import ExerciseDetailRoute from './routes/ExerciseDetail.jsx';
 import ProgressRoute from './routes/Progress.jsx';
+import MeasurementsRoute from './routes/Measurements.jsx';
 import ProfileRoute from './routes/Profile.jsx';
 import WorkoutDetailRoute from './routes/WorkoutDetail.jsx';
 
@@ -31,6 +32,7 @@ const router = createBrowserRouter([
       { path: 'exercises', element: <ExercisesRoute /> },
       { path: 'exercises/:id', element: <ExerciseDetailRoute /> },
       { path: 'progress', element: <ProgressRoute /> },
+      { path: 'measurements', element: <MeasurementsRoute /> },
       { path: 'profile', element: <ProfileRoute /> },
       { path: '*', element: <Navigate to="/" replace /> },
     ],

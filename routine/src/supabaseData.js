@@ -417,3 +417,49 @@ export async function deleteWeightEntry(userId, date) {
     .eq('entry_date', date);
   if (error) throw error;
 }
+
+// ---------------------------------------------------------------------------
+// Body measurements
+// ---------------------------------------------------------------------------
+
+const mapMeasurement = (r) => ({
+  id: r.id,
+  date: r.entry_date,
+  metric: r.metric,
+  value: Number(r.value),
+  unit: r.unit,
+});
+
+export async function fetchMeasurements(userId, days = 365) {
+  const since = dateKey(addDays(new Date(), -days));
+  const { data, error } = await supabase
+    .from('body_measurements')
+    .select('*')
+    .gte('entry_date', since)
+    .order('entry_date');
+  if (error) throw error;
+  return data.map(mapMeasurement);
+}
+
+export async function upsertMeasurement(userId, date, metric, value, unit = 'cm') {
+  const { data, error } = await supabase
+    .from('body_measurements')
+    .upsert(
+      { user_id: userId, entry_date: date, metric, value, unit },
+      { onConflict: 'user_id,entry_date,metric' },
+    )
+    .select()
+    .single();
+  if (error) throw error;
+  return mapMeasurement(data);
+}
+
+export async function deleteMeasurement(userId, date, metric) {
+  const { error } = await supabase
+    .from('body_measurements')
+    .delete()
+    .eq('user_id', userId)
+    .eq('entry_date', date)
+    .eq('metric', metric);
+  if (error) throw error;
+}

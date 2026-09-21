@@ -9,6 +9,7 @@ export function DataProvider({ userId, children }) {
   const [history, setHistory] = useState([]);
   const [activeWorkout, setActiveWorkout] = useState(null);
   const [weightEntries, setWeightEntries] = useState([]);
+  const [measurements, setMeasurements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
 
@@ -20,12 +21,18 @@ export function DataProvider({ userId, children }) {
       setLoading(true);
       setLoadError(null);
       try {
-        const [ex, rt, hist, active, weights] = await Promise.all([
+        const [ex, rt, hist, active, weights, meas] = await Promise.all([
           db.fetchExercises(),
           db.fetchRoutines(),
           db.fetchWorkoutHistory(),
           db.fetchActiveWorkout(),
           db.fetchWeightEntries(userId, 365),
+          // Measurements are optional: if the Phase 2 migration hasn't been
+          // run yet, degrade to an empty list rather than failing the whole app.
+          db.fetchMeasurements(userId, 365).catch((e) => {
+            console.warn('Measurements unavailable (run supabase-ironlog-phase2.sql):', e.message);
+            return [];
+          }),
         ]);
         if (cancelled) return;
         setExercises(ex);
@@ -33,6 +40,7 @@ export function DataProvider({ userId, children }) {
         setHistory(hist);
         setActiveWorkout(active);
         setWeightEntries(weights);
+        setMeasurements(meas);
       } catch (e) {
         console.error('Load failed:', e);
         if (!cancelled) setLoadError(e.message || 'Failed to load your data.');
@@ -209,6 +217,42 @@ export function DataProvider({ userId, children }) {
     [userId],
   );
 
+  // ---- body measurements --------------------------------------------------
+
+  const saveMeasurement = useCallback(
+    async (date, metric, value, unit) => {
+      setMeasurements((prev) => {
+        const without = prev.filter((m) => !(m.date === date && m.metric === metric));
+        return [...without, { id: `tmp-${date}-${metric}`, date, metric, value, unit }].sort(
+          (a, b) => a.date.localeCompare(b.date),
+        );
+      });
+      try {
+        const saved = await db.upsertMeasurement(userId, date, metric, value, unit);
+        setMeasurements((prev) =>
+          prev.map((m) => (m.date === date && m.metric === metric ? saved : m)),
+        );
+      } catch (e) {
+        console.error('Save measurement failed:', e);
+        setMeasurements(await db.fetchMeasurements(userId, 365));
+      }
+    },
+    [userId],
+  );
+
+  const removeMeasurement = useCallback(
+    async (date, metric) => {
+      setMeasurements((prev) => prev.filter((m) => !(m.date === date && m.metric === metric)));
+      try {
+        await db.deleteMeasurement(userId, date, metric);
+      } catch (e) {
+        console.error('Delete measurement failed:', e);
+        setMeasurements(await db.fetchMeasurements(userId, 365));
+      }
+    },
+    [userId],
+  );
+
   const value = {
     userId,
     loading,
@@ -219,6 +263,7 @@ export function DataProvider({ userId, children }) {
     history,
     activeWorkout,
     weightEntries,
+    measurements,
     personalRecords,
     createExercise,
     editExercise,
@@ -234,6 +279,8 @@ export function DataProvider({ userId, children }) {
     removeWorkout,
     saveWeight,
     removeWeight,
+    saveMeasurement,
+    removeMeasurement,
   };
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;

@@ -198,3 +198,167 @@ export function lastPerformance(workouts, exerciseId, excludeWorkoutId) {
   );
   return history.length > 0 ? history[0] : null;
 }
+
+// --- body measurements -----------------------------------------------------
+
+export const MEASUREMENT_METRICS = [
+  { key: 'neck', label: 'Neck', unit: 'cm' },
+  { key: 'shoulders', label: 'Shoulders', unit: 'cm' },
+  { key: 'chest', label: 'Chest', unit: 'cm' },
+  { key: 'arm', label: 'Arm', unit: 'cm' },
+  { key: 'forearm', label: 'Forearm', unit: 'cm' },
+  { key: 'waist', label: 'Waist', unit: 'cm' },
+  { key: 'hips', label: 'Hips', unit: 'cm' },
+  { key: 'thigh', label: 'Thigh', unit: 'cm' },
+  { key: 'calf', label: 'Calf', unit: 'cm' },
+  { key: 'bodyfat', label: 'Body fat', unit: 'percent' },
+];
+
+export function metricLabel(key) {
+  return MEASUREMENT_METRICS.find((m) => m.key === key)?.label || key;
+}
+
+export function metricUnit(key) {
+  return MEASUREMENT_METRICS.find((m) => m.key === key)?.unit || 'cm';
+}
+
+export function unitSuffix(unit) {
+  return unit === 'percent' ? '%' : 'cm';
+}
+
+/**
+ * Group measurements by metric, each sorted oldest first, with the
+ * latest value and the change across the supplied entries.
+ * Returns { [metric]: { entries, latest, first, delta } }
+ */
+export function groupMeasurements(measurements) {
+  const byMetric = {};
+  measurements.forEach((m) => {
+    if (!byMetric[m.metric]) byMetric[m.metric] = [];
+    byMetric[m.metric].push(m);
+  });
+
+  Object.keys(byMetric).forEach((key) => {
+    const entries = byMetric[key].sort((a, b) => a.date.localeCompare(b.date));
+    const first = entries[0];
+    const latest = entries[entries.length - 1];
+    byMetric[key] = {
+      entries,
+      first,
+      latest,
+      delta: entries.length > 1 ? latest.value - first.value : null,
+    };
+  });
+
+  return byMetric;
+}
+
+// --- aggregate trends ------------------------------------------------------
+
+/** ISO-ish week key (Monday-based) used to bucket volume. */
+function weekKey(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const dow = (d.getDay() + 6) % 7; // Monday = 0
+  d.setDate(d.getDate() - dow);
+  return d;
+}
+
+/**
+ * Weekly training volume for the last `weeks` weeks, oldest first.
+ * Weeks with no sessions are included as zero so the chart keeps its shape.
+ */
+export function weeklyVolume(workouts, weeks = 12, now = new Date()) {
+  const buckets = [];
+  const currentWeekStart = weekKey(now);
+
+  for (let i = weeks - 1; i >= 0; i--) {
+    const start = new Date(currentWeekStart);
+    start.setDate(start.getDate() - i * 7);
+    buckets.push({ start, volume: 0, sessions: 0 });
+  }
+
+  const firstStart = buckets[0].start.getTime();
+
+  workouts.forEach((w) => {
+    const ws = weekKey(w.startedAt).getTime();
+    if (ws < firstStart) return;
+    const idx = Math.round((ws - firstStart) / (7 * 86400000));
+    if (idx < 0 || idx >= buckets.length) return;
+    buckets[idx].volume += workoutVolume(w);
+    buckets[idx].sessions += 1;
+  });
+
+  return buckets;
+}
+
+/** Completed working sets per muscle group across the supplied workouts. */
+export function muscleSplit(workouts) {
+  const counts = {};
+  workouts.forEach((w) => {
+    (w.exercises || []).forEach((we) => {
+      const group = we.exercise?.muscleGroup;
+      if (!group) return;
+      const done = (we.sets || []).filter((s) => s.isComplete && !s.isWarmup).length;
+      if (done === 0) return;
+      counts[group] = (counts[group] || 0) + done;
+    });
+  });
+
+  const total = Object.values(counts).reduce((s, n) => s + n, 0);
+  return Object.entries(counts)
+    .map(([group, sets]) => ({ group, sets, share: total > 0 ? sets / total : 0 }))
+    .sort((a, b) => b.sets - a.sets);
+}
+
+/**
+ * Sessions where an exercise's best estimated 1RM beat everything before it.
+ * Newest first. Used for the "recent records" feed.
+ */
+export function recentPersonalRecords(workouts, limit = 8) {
+  const chronological = workouts
+    .slice()
+    .sort((a, b) => new Date(a.startedAt) - new Date(b.startedAt));
+
+  const best = {};
+  const records = [];
+
+  chronological.forEach((w) => {
+    (w.exercises || []).forEach((we) => {
+      const done = (we.sets || []).filter((s) => s.isComplete && !s.isWarmup);
+      if (done.length === 0) return;
+
+      let topOneRm = 0;
+      let topSet = null;
+      done.forEach((s) => {
+        const orm = estimateOneRepMax(s.weightKg, s.reps);
+        if (orm > topOneRm) {
+          topOneRm = orm;
+          topSet = s;
+        }
+      });
+      if (topOneRm <= 0 || !topSet) return;
+
+      const previous = best[we.exerciseId] || 0;
+      if (topOneRm > previous) {
+        // The first ever entry establishes a baseline rather than a "record".
+        if (previous > 0) {
+          records.push({
+            workoutId: w.id,
+            exerciseId: we.exerciseId,
+            name: we.exercise?.name || 'Exercise',
+            muscleGroup: we.exercise?.muscleGroup,
+            date: w.startedAt,
+            oneRm: topOneRm,
+            weightKg: topSet.weightKg,
+            reps: topSet.reps,
+            improvement: topOneRm - previous,
+          });
+        }
+        best[we.exerciseId] = topOneRm;
+      }
+    });
+  });
+
+  return records.reverse().slice(0, limit);
+}
