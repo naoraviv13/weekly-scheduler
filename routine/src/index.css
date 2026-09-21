@@ -1,3 +1,119 @@
-body {
-  margin: 0;
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------
+   Ironlog design tokens
+   Original palette — deep neutral surfaces + electric lime accent.
+   --------------------------------------------------------------- */
+@theme {
+  --color-ink-950: #09090b;
+  --color-ink-900: #101015;
+  --color-ink-850: #16161d;
+  --color-ink-800: #1c1c24;
+  --color-ink-700: #26262f;
+  --color-ink-600: #33333f;
+  --color-ink-500: #4a4a57;
+
+  --color-fog-400: #8a8a99;
+  --color-fog-300: #a8a8b5;
+  --color-fog-100: #e8e8ee;
+
+  --color-volt-400: #b8e600;
+  --color-volt-300: #ccff00;
+  --color-volt-200: #ddff5c;
+
+  --color-flame-400: #ff5c38;
+  --color-sky-400: #3ba9ff;
+  --color-mint-400: #2fd98a;
+
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html {
+    background-color: var(--color-ink-950);
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-ink-950);
+    color: var(--color-fog-100);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior-y: none;
+  }
+
+  /* Hide number-input spinners: set weights are edited by keypad, not arrows. */
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+  }
+
+  button {
+    font-family: inherit;
+    color: inherit;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-ink-900 border border-ink-700 rounded-2xl;
+  }
+
+  .btn-volt {
+    @apply bg-volt-300 text-ink-950 font-semibold rounded-xl px-4 py-3
+           transition active:scale-[0.98] disabled:opacity-40 disabled:active:scale-100;
+  }
+
+  .btn-ghost {
+    @apply bg-ink-800 text-fog-100 font-medium rounded-xl px-4 py-3
+           transition active:scale-[0.98] hover:bg-ink-700
+           disabled:opacity-40 disabled:active:scale-100;
+  }
+
+  .btn-danger {
+    @apply bg-flame-400/10 text-flame-400 font-medium rounded-xl px-4 py-3
+           transition active:scale-[0.98] hover:bg-flame-400/20;
+  }
+
+  .field {
+    @apply bg-ink-800 border border-ink-700 rounded-xl px-3 py-2.5 text-fog-100
+           placeholder:text-fog-400/60 outline-none transition
+           focus:border-volt-300/60 focus:ring-2 focus:ring-volt-300/20;
+  }
+
+  .label-mono {
+    @apply font-mono text-[10px] tracking-[0.14em] text-fog-400 uppercase;
+  }
+
+  /* Safe-area padding so the tab bar clears the iPhone home indicator. */
+  .pb-safe {
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+  }
+}
+
+/* Thin scrollbars that match the dark surfaces. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-ink-950);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-ink-700);
+  border-radius: 999px;
+  border: 3px solid var(--color-ink-950);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-ink-600);
 }

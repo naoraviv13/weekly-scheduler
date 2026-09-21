@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { supabase } from './supabaseClient';
+import { Dumbbell } from 'lucide-react';
 
 export default function Auth() {
   const [email, setEmail] = useState('');
@@ -7,135 +8,96 @@ export default function Auth() {
   const [isSignUp, setIsSignUp] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    setNotice(null);
 
-    const { error } = isSignUp
+    const { data, error: authError } = isSignUp
       ? await supabase.auth.signUp({ email, password })
       : await supabase.auth.signInWithPassword({ email, password });
 
-    if (error) setError(error.message);
+    if (authError) {
+      setError(authError.message);
+    } else if (isSignUp && !data.session) {
+      setNotice('Check your inbox to confirm your email address.');
+    }
     setLoading(false);
   };
 
   return (
-    <div style={{
-      minHeight: '100vh', background: '#FAFAF7',
-      fontFamily: "'Inter Tight', system-ui, sans-serif",
-      display: 'grid', placeItems: 'center', padding: 20,
-    }}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter+Tight:wght@400;500;600;700&display=swap');
-      `}</style>
-      <div style={{ width: '100%', maxWidth: 380 }}>
-        <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <div style={{
-            width: 48, height: 48, borderRadius: 14, background: '#0A0A0A',
-            display: 'inline-grid', placeItems: 'center', color: '#FF4D2E',
-            fontFamily: 'Fraunces, serif', fontWeight: 700, fontSize: 26, marginBottom: 16,
-          }}>R</div>
-          <h1 style={{
-            fontFamily: 'Fraunces, serif', fontStyle: 'italic', fontWeight: 600,
-            fontSize: 32, margin: '0 0 4px 0', letterSpacing: '-0.02em',
-          }}>
-            Routine<span style={{ color: '#FF4D2E' }}>.</span>
-          </h1>
-          <p style={{ color: '#737373', fontSize: 14, margin: 0 }}>
-            {isSignUp ? 'Create an account to get started' : 'Sign in to your account'}
+    <div className="grid min-h-screen place-items-center px-5">
+      <div className="w-full max-w-sm">
+        <div className="mb-8 text-center">
+          <span className="mb-4 inline-grid h-14 w-14 place-items-center rounded-2xl bg-volt-300 text-ink-950">
+            <Dumbbell size={26} />
+          </span>
+          <h1 className="text-3xl font-extrabold tracking-tight">Ironlog</h1>
+          <p className="mt-1 text-sm text-fog-400">
+            {isSignUp ? 'Create an account to start training' : 'Sign in to your training log'}
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} style={{
-          background: 'white', borderRadius: 20, padding: 24,
-          border: '1px solid rgba(0,0,0,0.06)',
-          boxShadow: '0 4px 20px -6px rgba(0,0,0,0.08)',
-        }}>
+        <form onSubmit={handleSubmit} className="card flex flex-col gap-3 px-5 py-5">
           {error && (
-            <div style={{
-              background: 'rgba(220,38,38,0.08)', color: '#DC2626',
-              padding: '10px 14px', borderRadius: 10, fontSize: 13,
-              fontWeight: 500, marginBottom: 16,
-            }}>
-              {error}
-            </div>
+            <p className="rounded-lg bg-flame-400/10 px-3 py-2 text-sm text-flame-400">{error}</p>
+          )}
+          {notice && (
+            <p className="rounded-lg bg-mint-400/10 px-3 py-2 text-sm text-mint-400">{notice}</p>
           )}
 
-          <div style={{ marginBottom: 14 }}>
-            <label style={{
-              fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-              color: '#737373', letterSpacing: '0.15em', fontWeight: 600,
-              display: 'block', marginBottom: 6,
-            }}>EMAIL</label>
+          <div>
+            <label htmlFor="email" className="label-mono mb-1.5 block">
+              Email
+            </label>
             <input
-              type="email" required value={email}
+              id="email"
+              className="field w-full"
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
-              style={{
-                width: '100%', padding: '12px 14px', borderRadius: 12,
-                border: '1.5px solid rgba(0,0,0,0.1)', background: 'white',
-                fontFamily: 'inherit', fontSize: 14, boxSizing: 'border-box',
-                outline: 'none', transition: 'border-color 0.15s ease',
-              }}
-              onFocus={(e) => e.target.style.borderColor = '#0A0A0A'}
-              onBlur={(e) => e.target.style.borderColor = 'rgba(0,0,0,0.1)'}
             />
           </div>
 
-          <div style={{ marginBottom: 20 }}>
-            <label style={{
-              fontFamily: "'JetBrains Mono', monospace", fontSize: 10,
-              color: '#737373', letterSpacing: '0.15em', fontWeight: 600,
-              display: 'block', marginBottom: 6,
-            }}>PASSWORD</label>
+          <div>
+            <label htmlFor="password" className="label-mono mb-1.5 block">
+              Password
+            </label>
             <input
-              type="password" required value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={isSignUp ? 'Min 6 characters' : 'Your password'}
+              id="password"
+              className="field w-full"
+              type="password"
+              autoComplete={isSignUp ? 'new-password' : 'current-password'}
+              required
               minLength={6}
-              style={{
-                width: '100%', padding: '12px 14px', borderRadius: 12,
-                border: '1.5px solid rgba(0,0,0,0.1)', background: 'white',
-                fontFamily: 'inherit', fontSize: 14, boxSizing: 'border-box',
-                outline: 'none', transition: 'border-color 0.15s ease',
-              }}
-              onFocus={(e) => e.target.style.borderColor = '#0A0A0A'}
-              onBlur={(e) => e.target.style.borderColor = 'rgba(0,0,0,0.1)'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
             />
           </div>
+
+          <button type="submit" disabled={loading} className="btn-volt mt-1 w-full">
+            {loading ? 'Please wait…' : isSignUp ? 'Create account' : 'Sign in'}
+          </button>
 
           <button
-            type="submit" disabled={loading}
-            style={{
-              width: '100%', padding: '12px 18px', borderRadius: 999,
-              background: '#0A0A0A', color: '#FAFAF7', border: 'none',
-              fontSize: 14, fontWeight: 600, fontFamily: 'inherit',
-              cursor: loading ? 'wait' : 'pointer',
-              opacity: loading ? 0.7 : 1,
-              transition: 'background 0.15s ease, transform 0.15s ease',
+            type="button"
+            onClick={() => {
+              setIsSignUp(!isSignUp);
+              setError(null);
+              setNotice(null);
             }}
-            onMouseEnter={(e) => { if (!loading) e.target.style.background = '#FF4D2E'; }}
-            onMouseLeave={(e) => { e.target.style.background = '#0A0A0A'; }}
+            className="text-center text-xs text-fog-400 transition hover:text-fog-100"
           >
-            {loading ? '...' : isSignUp ? 'Create Account' : 'Sign In'}
+            {isSignUp ? 'Already have an account? Sign in' : "No account yet? Sign up"}
           </button>
         </form>
-
-        <p style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: '#737373' }}>
-          {isSignUp ? 'Already have an account?' : "Don't have an account?"}{' '}
-          <button
-            onClick={() => { setIsSignUp(!isSignUp); setError(null); }}
-            style={{
-              background: 'none', border: 'none', color: '#0A0A0A',
-              fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-              fontSize: 13, textDecoration: 'underline', padding: 0,
-            }}
-          >
-            {isSignUp ? 'Sign in' : 'Sign up'}
-          </button>
-        </p>
       </div>
     </div>
   );

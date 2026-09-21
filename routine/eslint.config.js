@@ -18,4 +18,10 @@ export default defineConfig([
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
   },
+  {
+    // Entry point: mounts the tree rather than exporting a component,
+    // so the fast-refresh export rule does not apply.
+    files: ['src/main.jsx'],
+    rules: { 'react-refresh/only-export-components': 'off' },
+  },
 ])
