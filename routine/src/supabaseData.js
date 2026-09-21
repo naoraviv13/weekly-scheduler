@@ -309,6 +309,8 @@ export async function updateWorkout(id, patch) {
   const row = {};
   if (patch.name !== undefined) row.name = patch.name;
   if (patch.notes !== undefined) row.notes = patch.notes;
+  if (patch.startedAt !== undefined) row.started_at = patch.startedAt;
+  if (patch.endedAt !== undefined) row.ended_at = patch.endedAt;
 
   const { error } = await supabase.from('workouts').update(row).eq('id', id);
   if (error) throw error;

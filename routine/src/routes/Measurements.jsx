@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Plus, Trash2, Ruler } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Ruler, Pencil, Check, X } from 'lucide-react';
 import { useData } from '../lib/dataContext';
 import { SectionHeader, EmptyState, Sheet } from '../components/ui';
 import { LineTrend } from '../components/charts';
@@ -23,6 +23,8 @@ export default function MeasurementsRoute() {
   const [activeMetric, setActiveMetric] = useState(null);
   const [draft, setDraft] = useState({});
   const [date, setDate] = useState(() => dateKey(new Date()));
+  const [editingEntry, setEditingEntry] = useState(null); // `${date}|${metric}`
+  const [entryDraft, setEntryDraft] = useState('');
 
   const grouped = useMemo(() => groupMeasurements(measurements), [measurements]);
   const tracked = MEASUREMENT_METRICS.filter((m) => grouped[m.key]);
@@ -57,6 +59,18 @@ export default function MeasurementsRoute() {
   };
 
   const detail = activeMetric ? grouped[activeMetric] : null;
+
+  const beginEditEntry = (entry) => {
+    setEditingEntry(`${entry.date}|${entry.metric}`);
+    setEntryDraft(String(entry.value));
+  };
+
+  const saveEditEntry = (entry) => {
+    const num = parseFloat(entryDraft.replace(',', '.'));
+    if (Number.isNaN(num) || num <= 0 || num >= 1000) return;
+    saveMeasurement(entry.date, entry.metric, Math.round(num * 100) / 100, entry.unit);
+    setEditingEntry(null);
+  };
 
   return (
     <div className="flex flex-col gap-5">
@@ -144,31 +158,82 @@ export default function MeasurementsRoute() {
                 {detail.entries
                   .slice()
                   .reverse()
-                  .map((e) => (
-                    <div
-                      key={`${e.date}-${e.metric}`}
-                      className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-ink-800"
-                    >
-                      <span className="flex-1 text-sm text-fog-300">
-                        {formatDateLabel(`${e.date}T00:00:00`)}
-                      </span>
-                      <span className="font-mono text-sm tabular-nums">
-                        {trimNum(e.value)}
-                        <span className="text-[10px] text-fog-400"> {unitSuffix(e.unit)}</span>
-                      </span>
-                      <button
-                        onClick={() => {
-                          if (window.confirm(`Delete ${metricLabel(e.metric)} from ${e.date}?`)) {
-                            removeMeasurement(e.date, e.metric);
-                          }
-                        }}
-                        className="rounded p-1 text-fog-400 transition hover:text-flame-400"
-                        aria-label={`Delete ${e.metric} on ${e.date}`}
+                  .map((e) => {
+                    const key = `${e.date}|${e.metric}`;
+                    const isEditing = editingEntry === key;
+                    return (
+                      <div
+                        key={key}
+                        className="flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-ink-800"
                       >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  ))}
+                        <span className="flex-1 text-sm text-fog-300">
+                          {formatDateLabel(`${e.date}T00:00:00`)}
+                        </span>
+
+                        {isEditing ? (
+                          <>
+                            <input
+                              className="field w-24 px-2 py-1 text-center font-mono text-sm tabular-nums"
+                              type="number"
+                              step="0.1"
+                              inputMode="decimal"
+                              autoFocus
+                              value={entryDraft}
+                              onChange={(ev) => setEntryDraft(ev.target.value)}
+                              onKeyDown={(ev) => {
+                                if (ev.key === 'Enter') saveEditEntry(e);
+                                if (ev.key === 'Escape') setEditingEntry(null);
+                              }}
+                              aria-label={`Value for ${e.date}`}
+                            />
+                            <button
+                              onClick={() => saveEditEntry(e)}
+                              className="grid h-7 w-7 place-items-center rounded-md bg-volt-300 text-ink-950"
+                              aria-label="Save"
+                            >
+                              <Check size={14} strokeWidth={3} />
+                            </button>
+                            <button
+                              onClick={() => setEditingEntry(null)}
+                              className="grid h-7 w-7 place-items-center rounded-md text-fog-400 hover:text-fog-100"
+                              aria-label="Cancel"
+                            >
+                              <X size={14} />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-mono text-sm tabular-nums">
+                              {trimNum(e.value)}
+                              <span className="text-[10px] text-fog-400"> {unitSuffix(e.unit)}</span>
+                            </span>
+                            <button
+                              onClick={() => beginEditEntry(e)}
+                              className="rounded p-1 text-fog-400 transition hover:text-fog-100"
+                              aria-label={`Edit ${e.metric} on ${e.date}`}
+                            >
+                              <Pencil size={13} />
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (
+                                  window.confirm(
+                                    `Delete ${metricLabel(e.metric)} from ${e.date}?`,
+                                  )
+                                ) {
+                                  removeMeasurement(e.date, e.metric);
+                                }
+                              }}
+                              className="rounded p-1 text-fog-400 transition hover:text-flame-400"
+                              aria-label={`Delete ${e.metric} on ${e.date}`}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
               </div>
             </div>
           </div>

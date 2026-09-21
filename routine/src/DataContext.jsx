@@ -176,6 +176,28 @@ export function DataProvider({ userId, children }) {
 
   // ---- history ------------------------------------------------------------
 
+  /** Apply a local mutation to one finished workout without a refetch. */
+  const patchHistoryWorkout = useCallback((workoutId, updater) => {
+    setHistory((prev) => prev.map((w) => (w.id === workoutId ? updater(w) : w)));
+  }, []);
+
+  /** Edit a finished workout's name, notes or date. */
+  const editWorkout = useCallback(async (id, patch) => {
+    setHistory((prev) => {
+      const next = prev.map((w) => (w.id === id ? { ...w, ...patch } : w));
+      // Changing the date can reorder the history list.
+      return patch.startedAt
+        ? next.sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt))
+        : next;
+    });
+    try {
+      await db.updateWorkout(id, patch);
+    } catch (e) {
+      console.error('Edit workout failed:', e);
+      setHistory(await db.fetchWorkoutHistory());
+    }
+  }, []);
+
   const removeWorkout = useCallback(async (id) => {
     setHistory((prev) => prev.filter((w) => w.id !== id));
     try {
@@ -276,6 +298,8 @@ export function DataProvider({ userId, children }) {
     endWorkout,
     discardWorkout,
     renameActiveWorkout,
+    patchHistoryWorkout,
+    editWorkout,
     removeWorkout,
     saveWeight,
     removeWeight,

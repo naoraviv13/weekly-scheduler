@@ -29,7 +29,7 @@ const RANGES = [
 ];
 
 /** Line chart of body weight with tap-to-inspect points. */
-function WeightChart({ entries, days }) {
+function WeightChart({ entries, days, onEdit }) {
   const [selected, setSelected] = useState(null);
 
   if (entries.length === 0) {
@@ -145,13 +145,25 @@ function WeightChart({ entries, days }) {
 
       {selected && (
         <div
-          className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded-lg bg-ink-800 px-2.5 py-1.5 shadow-lg"
+          className="absolute z-10 -translate-x-1/2 -translate-y-full rounded-lg bg-ink-800 px-2.5 py-1.5 shadow-lg"
           style={{ left: `${(selected.x / W) * 100}%`, top: `${(selected.y / H) * 100 - 6}%` }}
+          onClick={(e) => e.stopPropagation()}
         >
           <p className="font-mono text-[9px] text-fog-400">{selected.date}</p>
           <p className="font-mono text-sm font-bold tabular-nums text-volt-300">
             {trimNum(selected.weight)} kg
           </p>
+          {onEdit && (
+            <button
+              onClick={() => {
+                onEdit(selected);
+                setSelected(null);
+              }}
+              className="mt-1 w-full rounded bg-ink-700 px-2 py-1 text-[10px] font-semibold text-fog-100 transition hover:bg-ink-600"
+            >
+              Edit
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -219,6 +231,7 @@ export default function ProgressRoute() {
   const [range, setRange] = useState('quarter');
   const [weightSheet, setWeightSheet] = useState(false);
   const [draft, setDraft] = useState('');
+  const [weightDate, setWeightDate] = useState(() => dateKey(new Date()));
   // Captured once per mount: calling Date.now() during render is impure.
   const [nowMs] = useState(() => Date.now());
 
@@ -270,12 +283,19 @@ export default function ProgressRoute() {
 
   const today = dateKey(new Date());
   const todayEntry = weightEntries.find((w) => w.date === today);
+  const editingExisting = weightEntries.some((w) => w.date === weightDate);
+
+  const openWeightSheet = (date, value) => {
+    setWeightDate(date);
+    setDraft(value !== undefined && value !== null ? String(value) : '');
+    setWeightSheet(true);
+  };
 
   const submitWeight = (e) => {
     e.preventDefault();
     const num = parseFloat(draft.replace(',', '.'));
     if (Number.isNaN(num) || num <= 0 || num >= 500) return;
-    saveWeight(today, Math.round(num * 100) / 100);
+    saveWeight(weightDate, Math.round(num * 100) / 100);
     setWeightSheet(false);
     setDraft('');
   };
@@ -409,7 +429,10 @@ export default function ProgressRoute() {
       <section>
         <SectionHeader
           action={
-            <button onClick={() => setWeightSheet(true)} className="text-xs font-medium text-volt-300">
+            <button
+              onClick={() => openWeightSheet(today, todayEntry?.weight)}
+              className="text-xs font-medium text-volt-300"
+            >
               {todayEntry ? 'Update today' : 'Log today'}
             </button>
           }
@@ -443,18 +466,15 @@ export default function ProgressRoute() {
             )}
           </div>
 
-          <WeightChart entries={windowEntries} days={days} />
+          <WeightChart
+            entries={windowEntries}
+            days={days}
+            onEdit={(p) => openWeightSheet(p.date, p.weight)}
+          />
 
-          {todayEntry && (
-            <button
-              onClick={() => {
-                if (window.confirm("Delete today's weight entry?")) removeWeight(today);
-              }}
-              className="mt-3 inline-flex items-center gap-1.5 text-xs text-fog-400 transition hover:text-flame-400"
-            >
-              <Trash2 size={13} /> Delete today&apos;s entry
-            </button>
-          )}
+          <p className="mt-2 text-[11px] text-fog-400">
+            Tap any point on the chart to edit that day&apos;s entry.
+          </p>
         </div>
       </section>
 
@@ -493,28 +513,66 @@ export default function ProgressRoute() {
       <Sheet
         open={weightSheet}
         onClose={() => setWeightSheet(false)}
-        title="Log body weight"
+        title={editingExisting ? 'Edit body weight' : 'Log body weight'}
         maxWidth="max-w-sm"
       >
         <form onSubmit={submitWeight} className="flex flex-col gap-3">
-          <div className="flex items-center gap-2">
+          <div>
+            <label className="label-mono mb-1.5 block" htmlFor="weight-date">
+              Date
+            </label>
             <input
-              className="field w-full text-center font-mono text-2xl font-bold tabular-nums"
-              type="number"
-              step="0.1"
-              inputMode="decimal"
-              autoFocus
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder={todayEntry ? String(todayEntry.weight) : '0.0'}
+              id="weight-date"
+              className="field w-full"
+              type="date"
+              value={weightDate}
+              max={today}
+              onChange={(e) => setWeightDate(e.target.value)}
             />
-            <span className="text-sm text-fog-400">kg</span>
           </div>
+
+          <div>
+            <label className="label-mono mb-1.5 block" htmlFor="weight-value">
+              Weight
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                id="weight-value"
+                className="field w-full text-center font-mono text-2xl font-bold tabular-nums"
+                type="number"
+                step="0.1"
+                inputMode="decimal"
+                autoFocus
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="0.0"
+              />
+              <span className="text-sm text-fog-400">kg</span>
+            </div>
+          </div>
+
           <button type="submit" className="btn-volt w-full">
             <span className="inline-flex items-center justify-center gap-1.5">
-              <Scale size={16} /> Save
+              <Scale size={16} /> {editingExisting ? 'Update' : 'Save'}
             </span>
           </button>
+
+          {editingExisting && (
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm(`Delete the weight entry for ${weightDate}?`)) {
+                  removeWeight(weightDate);
+                  setWeightSheet(false);
+                }
+              }}
+              className="btn-danger w-full"
+            >
+              <span className="inline-flex items-center justify-center gap-1.5">
+                <Trash2 size={16} /> Delete entry
+              </span>
+            </button>
+          )}
         </form>
       </Sheet>
     </div>
